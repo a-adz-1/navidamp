@@ -1,0 +1,1430 @@
+diff -ruN a/src/skins-qt/button.h b/src/skins-qt/button.h
+--- a/src/skins-qt/button.h	2026-06-07 18:02:36.000000000 +0100
++++ b/src/skins-qt/button.h	2026-10-10 12:53:03.168896995 +0100
+@@ -52,6 +52,7 @@
+ 
+     bool get_active () { return m_active; }
+     void set_active (bool active);
++    void set_width (int w) { m_w = w; resize (w, m_h); }
+ 
+ private:
+     enum Type {Normal, Toggle, Small};
+diff -ruN a/src/skins-qt/main.cc b/src/skins-qt/main.cc
+--- a/src/skins-qt/main.cc	2026-06-07 18:02:36.000000000 +0100
++++ b/src/skins-qt/main.cc	2026-10-10 12:53:03.170153734 +0100
+@@ -46,6 +46,7 @@
+ #include "skins_cfg.h"
+ #include "equalizer.h"
+ #include "main.h"
++#include "navidrome-win.h"
+ #include "vis-callbacks.h"
+ #include "playlistwin.h"
+ #include "button.h"
+@@ -121,6 +122,7 @@
+ static Button * mainwin_eject;
+ static Button * mainwin_play, * mainwin_pause, * mainwin_stop;
+ static Button * mainwin_shuffle, * mainwin_repeat;
++static Widget * mainwin_navidrome;
+ 
+ static TextBox * mainwin_stime_min, * mainwin_stime_sec;
+ static TextBox * mainwin_rate_text, * mainwin_freq_text, * mainwin_othertext;
+@@ -295,9 +297,21 @@
+     setup_widget (mainwin_eject, p->mainwin_eject_x, p->mainwin_eject_y, true);
+     setup_widget (mainwin_eq, p->mainwin_eqbutton_x, p->mainwin_eqbutton_y, true);
+     setup_widget (mainwin_pl, p->mainwin_plbutton_x, p->mainwin_plbutton_y, true);
++    /* Shuffle is narrowed to make room for the Navidrome button; Repeat moves
++     * left with it if the skin keeps them side by side (the usual layout) */
++    if (! skin.shuffle_width)
++        skin.shuffle_width = navidrome_narrow_shuffle ();
++    mainwin_shuffle->set_width (skin.shuffle_width);
++    int repeat_x = p->mainwin_repeat_x;
++    if (repeat_x == p->mainwin_shuffle_x + 46 && p->mainwin_repeat_y == p->mainwin_shuffle_y)
++        repeat_x = p->mainwin_shuffle_x + skin.shuffle_width;
++
+     setup_widget (mainwin_shuffle, p->mainwin_shuffle_x, p->mainwin_shuffle_y, true);
+-    setup_widget (mainwin_repeat, p->mainwin_repeat_x, p->mainwin_repeat_y, true);
+-    setup_widget (mainwin_about, p->mainwin_about_x, p->mainwin_about_y, true);
++    setup_widget (mainwin_repeat, repeat_x, p->mainwin_repeat_y, true);
++    /* Navidrome button: just right of Repeat; the logo hotspot moves over to make room */
++    setup_widget (mainwin_navidrome, repeat_x + 28, p->mainwin_repeat_y, true);
++    setup_widget (mainwin_about, aud::max (p->mainwin_about_x, repeat_x + 42),
++                  p->mainwin_about_y, true);
+     setup_widget (mainwin_minimize, p->mainwin_minimize_x, p->mainwin_minimize_y, true);
+     setup_widget (mainwin_shade, p->mainwin_shade_x, p->mainwin_shade_y, true);
+     setup_widget (mainwin_close, p->mainwin_close_x, p->mainwin_close_y, true);
+@@ -989,6 +1003,9 @@
+     mainwin_repeat->set_active (aud_get_bool ("repeat"));
+     mainwin_repeat->on_release (mainwin_repeat_cb);
+ 
++    mainwin_navidrome = navidrome_button_create ();
++    mainwin->put_widget (false, mainwin_navidrome, 238, 89);
++
+     mainwin_eq = new Button (23, 12, 0, 61, 46, 61, 0, 73, 46, 73, SKIN_SHUFREP, SKIN_SHUFREP);
+     mainwin->put_widget (false, mainwin_eq, 219, 58);
+     mainwin_eq->on_release (mainwin_eq_cb);
+@@ -1049,8 +1066,8 @@
+     mainwin_sec_num = new SkinnedNumber;
+     mainwin->put_widget (false, mainwin_sec_num, 90, 26);
+ 
+-    mainwin_about = new Button (20, 25);
+-    mainwin->put_widget (false, mainwin_about, 247, 83);
++    mainwin_about = new Button (15, 25);
++    mainwin->put_widget (false, mainwin_about, 252, 83);
+     mainwin_about->on_release ((ButtonCB) audqt::aboutwindow_show);
+ 
+     mainwin_vis = new SkinnedVis;
+diff -ruN a/src/skins-qt/menus.cc b/src/skins-qt/menus.cc
+--- a/src/skins-qt/menus.cc	2026-06-07 18:02:36.000000000 +0100
++++ b/src/skins-qt/menus.cc	2026-10-10 12:53:03.171238753 +0100
+@@ -35,6 +35,7 @@
+ #include "actions-playlist.h"
+ #include "main.h"
+ #include "view.h"
++#include "navidrome-win.h"
+ 
+ #include "../ui-common/menu-ops.h"
+ 
+@@ -143,6 +144,7 @@
+ static const audqt::MenuItem view_items[] = {
+     audqt::MenuToggle ({N_("Show Playlist Editor"), nullptr, "Alt+E"}, {"skins", "playlist_visible", "skins set playlist_visible"}, view_apply_show_playlist),
+     audqt::MenuToggle ({N_("Show Equalizer"), nullptr, "Alt+G"}, {"skins", "equalizer_visible", "skins set equalizer_visible"}, view_apply_show_equalizer),
++    audqt::MenuToggle ({N_("Show Navidrome"), nullptr, "Alt+N"}, {"skins", "navidrome_visible", "skins set navidrome_visible"}, view_apply_show_navidrome),
+     audqt::MenuSep (),
+     audqt::MenuToggle ({N_("Show Remaining Time"), nullptr, "Ctrl+R"}, {"skins", "show_remaining_time", "skins set show_remaining_time"}, view_apply_show_remaining),
+     audqt::MenuSep (),
+diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
+--- a/src/skins-qt/navidrome-win.cc	1970-01-01 01:00:00.000000000 +0100
++++ b/src/skins-qt/navidrome-win.cc	2026-10-10 12:53:03.167868809 +0100
+@@ -0,0 +1,1100 @@
++/*
++ * navidrome-win.cc
++ * Navidrome button and window for the Winamp Classic Interface.
++ * Part of audacious-navidrome. Author: a-adz-1
++ *
++ * This program is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU General Public License as published by the Free Software
++ * Foundation; under version 3 of the License (the same terms as the rest of this
++ * interface). See <http://www.gnu.org/licenses>.
++ *
++ * The window is drawn from the skin's GEN.BMP (Winamp's frame for extra windows,
++ * as used by its Media Library), with the playlist colours and font. All server
++ * work is done by the "navidrome" general plugin; this file only talks to it
++ * through aud_plugin_send_message() and listens for its hooks.
++ */
++
++#include <glib.h>
++
++#include <QFile>
++#include <QFontMetrics>
++#include <QMouseEvent>
++#include <QPainter>
++#include <QWheelEvent>
++#include <QWindow>
++#include <QRegularExpression>
++
++#include <libaudcore/audstrings.h>
++#include <libaudcore/hook.h>
++#include <libaudcore/i18n.h>
++#include <libaudcore/index.h>
++#include <libaudcore/interface.h>
++#include <libaudcore/objects.h>
++#include <libaudcore/plugins.h>
++#include <libaudcore/runtime.h>
++#include <libaudcore/templates.h>
++#include <libaudqt/libaudqt.h>
++
++#include "drag-handle.h"
++#include "main.h"
++#include "menus.h"
++#include "navidrome-win.h"
++#include "skin.h"
++#include "skins_cfg.h"
++#include "skins_util.h"
++#include "view.h"
++#include "window.h"
++
++#include "../ui-common/qt-compat.h"
++
++#include <algorithm>
++#include <climits>
++#include <cstdlib>
++#include <vector>
++
++/* ------------------------------------------------------------------ */
++/* Talking to the Navidrome plugin                                      */
++/* ------------------------------------------------------------------ */
++
++static PluginHandle * nd_plugin ()
++{
++    return aud_plugin_lookup_basename ("navidrome");
++}
++
++static bool nd_enabled ()
++{
++    PluginHandle * p = nd_plugin ();
++    return p && aud_plugin_get_enabled (p);
++}
++
++static int nd_send (const char * code, const void * data = nullptr)
++{
++    PluginHandle * p = nd_plugin ();
++    return (p && aud_plugin_get_enabled (p)) ? aud_plugin_send_message (p, code, data, 0) : -1;
++}
++
++static const char * const NOT_ENABLED =
++    N_("Turn on Navidrome in Settings > Plugins > General");
++
++/* What the window shows, pulled from the plugin whenever it fires a hook. */
++struct NdPlaylistRow
++{
++    String id, name, count;
++};
++
++static std::vector<NdPlaylistRow> s_playlists;
++static bool s_playlists_loaded = false;
++static String s_status, s_order, s_source, s_source_name;
++static bool s_busy = false;
++static bool s_loaded = false; // a Navidrome playlist exists in Audacious
++
++static void pull_from_plugin ()
++{
++    s_playlists.clear ();
++    s_playlists_loaded = false;
++    s_order = s_source = s_source_name = String ();
++    s_busy = s_loaded = false;
++
++    if (! nd_enabled ())
++    {
++        s_status = String (_(NOT_ENABLED));
++        return;
++    }
++
++    String status;
++    nd_send ("get-status", & status);
++    s_status = status;
++
++    Index<String> info;
++    nd_send ("get-info", & info);
++    if (info.len () >= 4)
++    {
++        s_order = info[0];
++        s_source = info[1];
++        s_source_name = info[2];
++        s_busy = info[3] && info[3][0];
++    }
++    if (info.len () >= 5)
++        s_loaded = info[4] && info[4][0];
++
++    Index<String> pls;
++    s_playlists_loaded = (nd_send ("get-playlists", & pls) == 0);
++    for (int i = 0; i + 2 < pls.len (); i += 3)
++        s_playlists.push_back ({pls[i], pls[i + 1], pls[i + 2]});
++}
++
++/* ------------------------------------------------------------------ */
++/* The button                                                           */
++/* ------------------------------------------------------------------ */
++
++static constexpr int BTN_W = 14, BTN_H = 15;
++
++/* A "N" glyph in the style of the SHUFFLE lettering (5x5). */
++static const char * const glyph[] = {
++    "X...X",
++    "XX..X",
++    "X.X.X",
++    "X..XX",
++    "X...X",
++};
++
++static QImage s_button_image;      // 14x60 custom button (4 states stacked), if provided
++
++static int saturation (QRgb c)
++{
++    int hi = aud::max (qRed (c), aud::max (qGreen (c), qBlue (c)));
++    int lo = aud::min (qRed (c), aud::min (qGreen (c), qBlue (c)));
++    return hi - lo;
++}
++
++/* How the button is drawn, worked out from the skin's Shuffle button when the
++ * skin loads (see navidrome_narrow_shuffle): its bevels, a column of plain
++ * face, how far each state is shifted, and the lettering and LED colours. */
++static QRgb s_glyph_off = qRgb (0x20, 0x20, 0x30), s_glyph_on = qRgb (0x80, 0xff, 0x40);
++static int s_face_x = -1;          // plain face column in SHUFREP (-1 = not known yet)
++static int s_shuf_w = 46;          // Shuffle width after narrowing
++static int s_shift[4] = {0, 0, 0, 0};
++
++/* Your own button art wins over the generated one: put a 14x60 image (rows:
++ * closed, closed+pressed, open, open+pressed, 15 pixels each) at
++ * ~/.config/audacious/navidrome-button.png, or navidrome.bmp/png in the skin. */
++static void load_button_override ()
++{
++    s_button_image = QImage ();
++    StringBuf user = filename_build ({aud_get_path (AudPath::UserDir), "navidrome-button.png"});
++    QImage img;
++    if (g_file_test (user, G_FILE_TEST_EXISTS))
++        img.load ((const char *) user);
++    if (img.isNull ())
++        img = skin.navidrome_button;
++    if (! img.isNull () && img.width () >= BTN_W && img.height () >= BTN_H * 4)
++        s_button_image = img.convertToFormat (QImage::Format_ARGB32);
++}
++
++class NavidromeButton : public Widget
++{
++public:
++    NavidromeButton ()
++    {
++        set_scale (config.scale);
++        add_input (BTN_W, BTN_H, false, true);
++        setToolTip (_("Navidrome"));
++    }
++
++    void set_active (bool active)
++    {
++        m_active = active;
++        queue_draw ();
++    }
++
++private:
++    void draw (QPainter & cr) override;
++    bool button_press (QMouseEvent * event) override;
++    bool button_release (QMouseEvent * event) override;
++
++    bool m_pressed = false, m_active = false;
++};
++
++static NavidromeButton * s_button = nullptr;
++
++void NavidromeButton::draw (QPainter & cr)
++{
++    int row = (m_active ? 30 : 0) + (m_pressed ? 15 : 0);
++
++    if (! s_button_image.isNull ())
++    {
++        cr.drawImage (QRect (0, 0, BTN_W, BTN_H), s_button_image, QRect (0, row, BTN_W, BTN_H));
++        return;
++    }
++
++    // Built from the skin's own Shuffle button: its left bevel, a strip of
++    // plain face, and its right bevel - so it matches whatever skin is loaded.
++    if (s_face_x >= 0)
++    {
++        int state = row / 15;
++        skin_draw_pixbuf (cr, SKIN_SHUFREP, 28, row, 0, 0, 3, BTN_H);
++        for (int x = 3; x < BTN_W - 3; x ++)
++            skin_draw_pixbuf (cr, SKIN_SHUFREP, s_face_x + s_shift[state], row, x, 0, 1, BTN_H);
++        skin_draw_pixbuf (cr, SKIN_SHUFREP, 28 + s_shuf_w - 3, row, BTN_W - 3, 0, 3, BTN_H);
++    }
++    else
++    {
++        skin_draw_pixbuf (cr, SKIN_SHUFREP, 0, row, 0, 0, 3, BTN_H);
++        for (int x = 3; x < BTN_W - 3; x ++)
++            skin_draw_pixbuf (cr, SKIN_SHUFREP, 23, row, x, 0, 1, BTN_H);
++        skin_draw_pixbuf (cr, SKIN_SHUFREP, 25, row, BTN_W - 3, 0, 3, BTN_H);
++    }
++
++    int off = m_pressed ? 1 : 0;
++    cr.setPen (Qt::NoPen);
++    cr.setBrush (QColor (m_active ? s_glyph_on : s_glyph_off));
++    for (int gy = 0; gy < 5; gy ++)
++        for (int gx = 0; gx < 5; gx ++)
++            if (glyph[gy][gx] == 'X')
++                cr.drawRect (4 + gx + off, 5 + gy + off, 1, 1);
++}
++
++bool NavidromeButton::button_press (QMouseEvent * event)
++{
++    if (event->button () != Qt::LeftButton)
++        return false;
++    m_pressed = true;
++    queue_draw ();
++    return true;
++}
++
++bool NavidromeButton::button_release (QMouseEvent * event)
++{
++    if (event->button () != Qt::LeftButton || ! m_pressed)
++        return false;
++    m_pressed = false;
++    if (rect ().contains (event->pos ()))
++        view_set_show_navidrome (! aud_get_bool ("skins", "navidrome_visible"));
++    queue_draw ();
++    return true;
++}
++
++/* ------------------------------------------------------------------ */
++/* Narrowing Shuffle to make room                                       */
++/* ------------------------------------------------------------------ */
++
++/* The skin's Shuffle button (46x15, four states stacked in SHUFREP.BMP) is
++ * narrowed by taking out up to 6 columns that only repeat their neighbour:
++ * plain face first (the gaps around the LED and the text), then the doubled
++ * middle column of 4-pixel letters like H and U. Single-pixel gaps between
++ * letters and the LED are never touched, so the lettering stays readable. */
++
++static constexpr int SHUF_X = 28, SHUF_W = 46, SHUF_H = 15, MAX_NARROW = 6;
++static constexpr int IN_L = 3, IN_R = SHUF_W - 3;   // inside the bevels
++
++static int lum (QRgb c) { return (qRed (c) * 3 + qGreen (c) * 6 + qBlue (c)) / 10; }
++
++static bool columns_alike (const QImage & im, int y0, int a, int b)
++{
++    for (int y = 0; y < SHUF_H; y ++)
++    {
++        QRgb p = im.pixel (SHUF_X + a, y0 + y), q = im.pixel (SHUF_X + b, y0 + y);
++        if (abs (qRed (p) - qRed (q)) + abs (qGreen (p) - qGreen (q)) + abs (qBlue (p) - qBlue (q)) > 36)
++            return false;
++    }
++    return true;
++}
++
++/* Which columns carry lettering or the LED: pixels that stand out from the
++ * rest of their row. Rows that are one colour all the way across (bevels,
++ * shading) don't count. */
++static std::vector<bool> ink_columns (const QImage & im, int y0)
++{
++    std::vector<bool> ink (SHUF_W, false);
++    for (int y = 3; y < SHUF_H - 2; y ++)
++    {
++        std::vector<int> row;
++        for (int x = IN_L; x < IN_R; x ++)
++            row.push_back (lum (im.pixel (SHUF_X + x, y0 + y)));
++        std::vector<int> sorted = row;
++        std::nth_element (sorted.begin (), sorted.begin () + sorted.size () / 2, sorted.end ());
++        int median = sorted[sorted.size () / 2];
++        for (int x = IN_L; x < IN_R; x ++)
++            if (abs (row[x - IN_L] - median) > 35)
++                ink[x] = true;
++    }
++    return ink;
++}
++
++/* How far a state's contents are shifted compared with the normal state
++ * (pressed buttons are often drawn 1px to the right). */
++static int state_shift (const std::vector<bool> & base, const std::vector<bool> & other)
++{
++    int best = 0, best_err = INT_MAX;
++    for (int d = -2; d <= 2; d ++)
++    {
++        int err = 0;
++        for (int x = IN_L; x < IN_R; x ++)
++        {
++            int xs = x + d;
++            bool o = (xs >= IN_L && xs < IN_R) ? other[xs] : false;
++            err += (base[x] != o);
++        }
++        if (err < best_err || (err == best_err && abs (d) < abs (best)))
++            best = d, best_err = err;
++    }
++    return best;
++}
++
++int navidrome_narrow_shuffle ()
++{
++    QImage & im = skin.pixmaps[SKIN_SHUFREP];
++    s_face_x = -1;
++    s_shuf_w = SHUF_W;
++    s_glyph_off = qRgb (0x20, 0x20, 0x30);
++    s_glyph_on = qRgb (0x80, 0xff, 0x40);
++    for (int & d : s_shift)
++        d = 0;
++    if (im.width () < SHUF_X + SHUF_W || im.height () < 4 * SHUF_H)
++        return SHUF_W;
++
++    // Runs of look-alike columns in the normal (off) state
++    std::vector<bool> ink = ink_columns (im, 0);
++    struct Run { int start, len; bool face; };
++    std::vector<Run> runs;
++    for (int x = IN_L; x < IN_R; )
++    {
++        int k = x;
++        while (k + 1 < IN_R && columns_alike (im, 0, k + 1, k))
++            k ++;
++        // never touch the LED: any column that changes when Shuffle is turned on
++        bool led = false;
++        for (int i = x; i <= k; i ++)
++            for (int y = 0; y < SHUF_H; y ++)
++                if (im.pixel (SHUF_X + i, y) != im.pixel (SHUF_X + i, 2 * SHUF_H + y))
++                    led = true;
++        if (k > x && ! led)
++        {
++            bool face = true;
++            for (int i = x; i <= k; i ++)
++                face = face && ! ink[i];
++            runs.push_back ({x, k - x + 1, face});
++        }
++        x = k + 1;
++    }
++
++    // Take one column at a time: plain face before letters, longest runs first
++    std::vector<int> drop;
++    while ((int) drop.size () < MAX_NARROW)
++    {
++        int best = -1;
++        for (int i = 0; i < (int) runs.size (); i ++)
++        {
++            if (runs[i].len < 2)
++                continue;
++            if (best < 0 || (runs[i].face && ! runs[best].face) ||
++                (runs[i].face == runs[best].face && runs[i].len > runs[best].len))
++                best = i;
++        }
++        if (best < 0)
++            break;
++        drop.push_back (runs[best].start + runs[best].len - 1);
++        runs[best].len --;
++    }
++    // Colours and face for the Navidrome button, taken before anything moves
++    std::vector<bool> led_col (SHUF_W, false);
++    for (int x = IN_L; x < IN_R; x ++)
++        for (int y = 0; y < SHUF_H; y ++)
++            if (im.pixel (SHUF_X + x, y) != im.pixel (SHUF_X + x, 2 * SHUF_H + y))
++                led_col[x] = true;
++
++    int best_off = -1, best_on = -1;
++    for (int y = 3; y < SHUF_H - 2; y ++)
++    {
++        std::vector<int> row;
++        for (int x = IN_L; x < IN_R; x ++)
++            row.push_back (lum (im.pixel (SHUF_X + x, y)));
++        std::vector<int> sorted = row;
++        std::nth_element (sorted.begin (), sorted.begin () + sorted.size () / 2, sorted.end ());
++        int median = sorted[sorted.size () / 2];
++        for (int x = IN_L; x < IN_R; x ++)
++        {
++            // lettering: the pixel that stands out most from the face, outside the LED
++            int contrast = abs (row[x - IN_L] - median);
++            if (ink[x] && ! led_col[x] && contrast > best_off)
++                best_off = contrast, s_glyph_off = im.pixel (SHUF_X + x, y);
++            // lit LED: the most colourful pixel among the columns that light up
++            QRgb lit = im.pixel (SHUF_X + x, 2 * SHUF_H + y);
++            if (led_col[x] && saturation (lit) > best_on)
++                best_on = saturation (lit), s_glyph_on = lit;
++        }
++    }
++    if (best_off < 0)          // whole button lights up: any lettering will do
++    {
++        for (int y = 3; y < SHUF_H - 2; y ++)
++        {
++            std::vector<int> row;
++            for (int x = IN_L; x < IN_R; x ++)
++                row.push_back (lum (im.pixel (SHUF_X + x, y)));
++            std::vector<int> sorted = row;
++            std::nth_element (sorted.begin (), sorted.begin () + sorted.size () / 2, sorted.end ());
++            int median = sorted[sorted.size () / 2];
++            for (int x = IN_L; x < IN_R; x ++)
++                if (ink[x] && abs (row[x - IN_L] - median) > best_off)
++                    best_off = abs (row[x - IN_L] - median), s_glyph_off = im.pixel (SHUF_X + x, y);
++        }
++    }
++    if (best_on < 40)          // no coloured LED in this skin: keep Winamp green
++        s_glyph_on = qRgb (0x80, 0xff, 0x40);
++
++    int face = -1;      // plain face: no lettering, and not part of the LED...
++    for (int x = IN_L; x < IN_R && face < 0; x ++)
++        if (! ink[x] && ! led_col[x])
++            face = x;
++    for (int x = IN_L; x < IN_R && face < 0; x ++)   // ...or, if the whole button lights up, just no lettering
++        if (! ink[x])
++            face = x;
++    for (int s = 1; s < 4; s ++)
++        s_shift[s] = state_shift (ink, ink_columns (im, s * SHUF_H));
++
++    // Some skins show "on" by recolouring the whole button rather than an LED;
++    // then use the lit lettering, so the N stays readable on the lit face.
++    auto distance = [] (QRgb a, QRgb b) {
++        return abs (qRed (a) - qRed (b)) + abs (qGreen (a) - qGreen (b)) + abs (qBlue (a) - qBlue (b));
++    };
++    if (face >= 0 && distance (s_glyph_on, im.pixel (SHUF_X + face, 2 * SHUF_H + 7)) < 150)
++    {
++        QRgb lit_face = im.pixel (SHUF_X + face, 2 * SHUF_H + 7);
++        int best = -1;
++        for (int y = 3; y < SHUF_H - 2; y ++)
++            for (int x = IN_L; x < IN_R; x ++)
++            {
++                QRgb c = im.pixel (SHUF_X + x, 2 * SHUF_H + y);
++                if (distance (c, lit_face) > best)
++                    best = distance (c, lit_face), s_glyph_on = c;
++            }
++    }
++
++    if (face >= 0)
++    {
++        int before = 0;     // dropped columns left of the face column
++        for (int x : drop)
++            before += (x < face);
++        bool dropped = std::find (drop.begin (), drop.end (), face) != drop.end ();
++        s_face_x = SHUF_X + face - before - (dropped ? 1 : 0);
++    }
++    s_shuf_w = SHUF_W - (int) drop.size ();
++
++    if (drop.empty ())
++        return SHUF_W;
++
++    // Remove the same columns from all four states, allowing for any shift
++    for (int s = 0; s < 4; s ++)
++    {
++        int y0 = s * SHUF_H;
++        int d = s_shift[s];
++        QImage strip = im.copy (SHUF_X, y0, SHUF_W, SHUF_H);
++        int out = 0;
++        for (int x = 0; x < SHUF_W; x ++)
++        {
++            if (std::find (drop.begin (), drop.end (), x - d) != drop.end ())
++                continue;
++            for (int y = 0; y < SHUF_H; y ++)
++                im.setPixel (SHUF_X + out, y0 + y, strip.pixel (x, y));
++            out ++;
++        }
++    }
++
++    return SHUF_W - (int) drop.size ();
++}
++
++Widget * navidrome_button_create ()
++{
++    s_button = new NavidromeButton;
++    s_button->set_active (aud_get_bool ("skins", "navidrome_visible"));
++    return s_button;
++}
++
++void navidrome_button_set_active (bool active)
++{
++    if (s_button)
++        s_button->set_active (active);
++}
++
++/* ------------------------------------------------------------------ */
++/* GEN.BMP: frame pieces and the bitmap title font                      */
++/* ------------------------------------------------------------------ */
++
++static constexpr int WIN_W = 275, TOP = 20, BOTTOM = 14, LEFT = 11, RIGHT = 8;
++static constexpr int MIN_H = TOP + 29 + 24 + BOTTOM;   // 87
++static constexpr int STEP_H = 29;
++
++static int snap_height (int h)
++{
++    // the side pieces tile in 29px steps, with a 24px piece at the bottom
++    int k = aud::max (1, (h - TOP - 24 - BOTTOM + STEP_H / 2) / STEP_H);
++    return TOP + STEP_H * k + 24 + BOTTOM;
++}
++
++struct GenLetter
++{
++    int x, w;
++};
++
++static GenLetter s_letters[26];
++static bool s_have_letters = false;
++
++static bool have_gen ()
++{
++    return skin.gen.width () >= 194 && skin.gen.height () >= 103;
++}
++
++/* The letters A-Z sit on two rows (focused / unfocused), separated by
++ * columns of the sheet's background colour. */
++static void scan_gen_letters ()
++{
++    s_have_letters = false;
++    if (! have_gen ())
++        return;
++
++    const QImage & im = skin.gen;
++    QRgb bg = im.pixel (im.width () - 1, 88);
++    std::vector<GenLetter> runs;
++    int start = -1;
++    for (int x = 0; x <= im.width (); x ++)
++    {
++        bool ink = false;
++        if (x < im.width ())
++            for (int y = 88; y < 95; y ++)
++                if (im.pixel (x, y) != bg)
++                    ink = true;
++        if (ink && start < 0)
++            start = x;
++        else if (! ink && start >= 0)
++        {
++            runs.push_back ({start, x - start});
++            start = -1;
++        }
++    }
++
++    // Some skins leave out a separator (Winamp_Classic_CM runs X and Y
++    // together), so split the widest run until there are 26 letters.
++    while (runs.size () > 0 && runs.size () < 26)
++    {
++        auto widest = std::max_element (runs.begin (), runs.end (),
++            [] (const GenLetter & a, const GenLetter & b) { return a.w < b.w; });
++        if (widest->w < 6)
++            break;
++        GenLetter right = {widest->x + widest->w / 2, widest->w - widest->w / 2};
++        widest->w /= 2;
++        runs.insert (widest + 1, right);
++    }
++
++    if (runs.size () < 26)
++        return;
++    for (int i = 0; i < 26; i ++)
++        s_letters[i] = runs[i];
++    s_have_letters = true;
++}
++
++static int gen_text_width (const char * text)
++{
++    int w = 0;
++    for (const char * c = text; * c; c ++)
++    {
++        if (* c >= 'A' && * c <= 'Z')
++            w += s_letters[* c - 'A'].w + 1;
++        else
++            w += 5;
++    }
++    return w > 0 ? w - 1 : 0;
++}
++
++static void gen_draw (QPainter & cr, int sx, int sy, int dx, int dy, int w, int h)
++{
++    cr.drawImage (QRect (dx, dy, w, h), skin.gen, QRect (sx, sy, w, h));
++}
++
++static void gen_draw_text (QPainter & cr, const char * text, int x, int y, bool focused)
++{
++    int sy = focused ? 88 : 96;
++    for (const char * c = text; * c; c ++)
++    {
++        if (* c >= 'A' && * c <= 'Z')
++        {
++            const GenLetter & l = s_letters[* c - 'A'];
++            gen_draw (cr, l.x, sy, x, y, l.w, 7);
++            x += l.w + 1;
++        }
++        else
++            x += 5;
++    }
++}
++
++static const char * const TITLE = "NAVIDROME";
++
++static void draw_gen_frame (QPainter & cr, int h, bool focused, bool close_pressed)
++{
++    int ty = focused ? 0 : 21;
++
++    // title bar: corners, fill, and a plain centre block behind the title
++    for (int x = 25; x < WIN_W - 25; x += 25)
++        gen_draw (cr, 104, ty, x, 0, aud::min (25, WIN_W - 25 - x), TOP);
++    gen_draw (cr, 0, ty, 0, 0, 25, TOP);
++    gen_draw (cr, 130, ty, WIN_W - 25, 0, 25, TOP);
++
++    int tw = s_have_letters ? gen_text_width (TITLE) : 60;
++    int tx = (WIN_W - tw) / 2;
++    gen_draw (cr, 26, ty, tx - 25, 0, 25, TOP);
++    for (int x = tx; x < tx + tw; x += 25)
++        gen_draw (cr, 52, ty, x, 0, aud::min (25, tx + tw - x), TOP);
++    gen_draw (cr, 78, ty, tx + tw, 0, 25, TOP);
++
++    if (s_have_letters)
++        gen_draw_text (cr, TITLE, tx, 4, focused);
++
++    if (close_pressed)
++        gen_draw (cr, 148, 42, WIN_W - 11, 3, 9, 9);
++
++    // sides
++    int side_end = h - BOTTOM - 24;
++    for (int y = TOP; y < side_end; y += STEP_H)
++    {
++        int ph = aud::min (STEP_H, side_end - y);
++        gen_draw (cr, 127, 42, 0, y, LEFT, ph);
++        gen_draw (cr, 139, 42, WIN_W - RIGHT, y, RIGHT, ph);
++    }
++    gen_draw (cr, 158, 42, 0, side_end, LEFT, 24);
++    gen_draw (cr, 170, 42, WIN_W - RIGHT, side_end, RIGHT, 24);
++
++    // bottom
++    for (int x = 125; x < WIN_W - 125; x += 25)
++        gen_draw (cr, 127, 72, x, h - BOTTOM, aud::min (25, WIN_W - 125 - x), BOTTOM);
++    gen_draw (cr, 0, 42, 0, h - BOTTOM, 125, BOTTOM);
++    gen_draw (cr, 0, 57, WIN_W - 125, h - BOTTOM, 125, BOTTOM);
++}
++
++/* For skins without GEN.BMP: a plain frame in the playlist colours. */
++static void draw_plain_frame (QPainter & cr, int h, bool focused, const QFont & font)
++{
++    QColor fg (skin.colors[SKIN_PLEDIT_NORMAL]), bg (skin.colors[SKIN_PLEDIT_NORMALBG]);
++    cr.fillRect (0, 0, WIN_W, h, bg);
++    cr.setPen (fg);
++    cr.drawRect (0, 0, WIN_W - 1, h - 1);
++    cr.drawLine (0, TOP - 1, WIN_W, TOP - 1);
++    cr.drawLine (0, h - BOTTOM, WIN_W, h - BOTTOM);
++    cr.setFont (font);
++    cr.drawText (QRect (0, 0, WIN_W, TOP - 1), Qt::AlignCenter,
++                 focused ? QString ("NAVIDROME") : QString ("navidrome"));
++    cr.drawText (QRect (WIN_W - 14, 0, 12, TOP - 1), Qt::AlignCenter, "x");
++}
++
++/* ------------------------------------------------------------------ */
++/* The window                                                           */
++/* ------------------------------------------------------------------ */
++
++enum { ROW_SHUFFLE, ROW_REFRESH, ROW_SETTINGS, ROW_HEADER, ROW_FIRST_PLAYLIST };
++
++static const struct { const char * key, * label; } orders[] = {
++    {"folder", N_("by folder")},
++    {"artist", N_("by artist")},
++    {"title", N_("by title")},
++    {"random", N_("scrambled")},
++};
++
++static int order_index (const char * key)
++{
++    for (int i = 0; i < 4; i ++)
++        if (key && ! strcmp (key, orders[i].key))
++            return i;
++    return 0;
++}
++
++class NavidromeWindow : public Window
++{
++public:
++    NavidromeWindow (int h) :
++        Window (WINDOW_NAVIDROME, & config.navidrome_x, & config.navidrome_y, WIN_W, h, false),
++        m_height (h)
++    {
++        update_font ();
++    }
++
++    void update_font ()
++    {
++        m_font = audqt::qfont_from_string (aud_get_str ("skins", "playlist_font"));
++        m_row_h = aud::max (8, QFontMetrics (m_font).height ());
++    }
++
++    void set_height (int h);
++    int height_px () const { return m_height; }
++
++private:
++    void draw (QPainter & cr) override;
++    bool button_press (QMouseEvent * event) override;
++    bool button_release (QMouseEvent * event) override;
++    bool motion (QMouseEvent * event) override;
++    bool scroll (QWheelEvent * event) override;
++    bool leave () override;
++
++    int rows () const { return (m_height - TOP - BOTTOM) / m_row_h; }
++    int playlist_rows () const { return aud::max (0, rows () - ROW_FIRST_PLAYLIST); }
++    int row_at (int x, int y) const;
++    int order_x () const;
++    void clamp_scroll ();
++
++    int m_height;
++    QFont m_font;
++    int m_row_h = 12;
++    int m_scroll = 0;
++    int m_hover = -1, m_pressed_row = -1;
++    bool m_close_pressed = false;
++};
++
++Window * navidromewin;
++static DragHandle * s_resize_handle;
++
++void NavidromeWindow::set_height (int h)
++{
++    m_height = h;
++    resize (WIN_W, h);
++    move_widget (false, s_resize_handle, WIN_W - 20, h - 20);
++    clamp_scroll ();
++    queue_draw ();
++}
++
++void NavidromeWindow::clamp_scroll ()
++{
++    int max_scroll = aud::max (0, (int) s_playlists.size () - playlist_rows ());
++    m_scroll = aud::clamp (m_scroll, 0, max_scroll);
++}
++
++int NavidromeWindow::row_at (int x, int y) const
++{
++    if (x < LEFT || x >= WIN_W - RIGHT || y < TOP || y >= m_height - BOTTOM)
++        return -1;
++    int r = (y - TOP) / m_row_h;
++    return r < rows () ? r : -1;
++}
++
++int NavidromeWindow::order_x () const
++{
++    QFontMetrics fm (m_font);
++    QString label = QString (_(orders[order_index (s_order)].label)) + " >";
++    return WIN_W - RIGHT - 3 - fm.horizontalAdvance (label);
++}
++
++void NavidromeWindow::draw (QPainter & cr)
++{
++    bool focused = is_focused ();
++    QColor normal (skin.colors[SKIN_PLEDIT_NORMAL]);
++    QColor current (skin.colors[SKIN_PLEDIT_CURRENT]);
++    QColor normal_bg (skin.colors[SKIN_PLEDIT_NORMALBG]);
++    QColor selected_bg (skin.colors[SKIN_PLEDIT_SELECTEDBG]);
++    QColor dim ((normal.red () + normal_bg.red ()) / 2,
++                (normal.green () + normal_bg.green ()) / 2,
++                (normal.blue () + normal_bg.blue ()) / 2);
++
++    if (have_gen ())
++        draw_gen_frame (cr, m_height, focused, m_close_pressed);
++    else
++        draw_plain_frame (cr, m_height, focused, m_font);
++
++    QRect content (LEFT, TOP, WIN_W - LEFT - RIGHT, m_height - TOP - BOTTOM);
++    cr.fillRect (content, normal_bg);
++    cr.setClipRect (content);
++    cr.setFont (m_font);
++    QFontMetrics fm (m_font);
++
++    auto text_row = [&] (int r, const QString & left, const QString & right,
++                         const QColor & colour, bool highlight) {
++        QRect row (LEFT, TOP + r * m_row_h, content.width (), m_row_h);
++        if (highlight)
++            cr.fillRect (row, selected_bg);
++        cr.setPen (colour);
++        QRect inner = row.adjusted (3, 0, -3, 0);
++        // short labels ("Refresh") always show in full; long ones (playlist
++        // names) give way to the count on the right; status text is trimmed
++        int left_full = fm.horizontalAdvance (left);
++        int right_full = right.isEmpty () ? 0 : fm.horizontalAdvance (right);
++        int left_w = aud::min (left_full + 2, aud::max (inner.width () / 2, inner.width () - right_full - 8));
++        int right_w = aud::max (0, inner.width () - left_w - 8);
++        if (! right.isEmpty ())
++            cr.drawText (inner, Qt::AlignRight | Qt::AlignVCenter,
++                         fm.elidedText (right, Qt::ElideRight, right_w));
++        cr.drawText (QRect (inner.x (), inner.y (), left_w, inner.height ()),
++                     Qt::AlignLeft | Qt::AlignVCenter, fm.elidedText (left, Qt::ElideRight, left_w));
++    };
++
++    bool library_loaded = s_loaded && s_source && ! s_source[0];
++    bool enabled = nd_enabled ();
++
++    // Shuffle all
++    QString order_label = QString (_(orders[order_index (s_order)].label)) + " >";
++    text_row (ROW_SHUFFLE, _("Shuffle All Songs"), enabled ? order_label : QString (),
++              library_loaded ? current : normal,
++              m_hover == ROW_SHUFFLE || m_pressed_row == ROW_SHUFFLE);
++
++    // Refresh, with the status on the right
++    QString status = s_status ? QString (s_status) : QString ();
++    if (status.isEmpty () && enabled && s_loaded && s_source)
++        status = s_source[0] ? QString (_("Now: %1")).arg ((const char *) s_source_name)
++                             : QString (_("Now: whole library"));
++    text_row (ROW_REFRESH, _("Refresh"), status, normal,
++              m_hover == ROW_REFRESH || m_pressed_row == ROW_REFRESH);
++
++    // Server settings, with the server it's pointed at on the right
++    QString server = QString ((const char *) aud_get_str ("navidrome", "url"));
++    server.remove (QRegularExpression ("^https?://")).remove (QRegularExpression ("/+$"));
++    text_row (ROW_SETTINGS, _("Server Settings"), server.isEmpty () ? QString (_("not set up")) : server,
++              normal, m_hover == ROW_SETTINGS || m_pressed_row == ROW_SETTINGS);
++
++    // Playlists header
++    QString header_right;
++    int n = s_playlists.size ();
++    if (n > playlist_rows ())
++        header_right = QString ("%1-%2 of %3").arg (m_scroll + 1)
++                           .arg (aud::min (n, m_scroll + playlist_rows ())).arg (n);
++    else if (s_playlists_loaded)
++        header_right = QString::number (n);
++    text_row (ROW_HEADER, _("Playlists"), header_right, dim, false);
++    int line_y = TOP + ROW_HEADER * m_row_h + m_row_h - 1;
++    cr.setPen (dim);
++    cr.drawLine (LEFT + 3, line_y, WIN_W - RIGHT - 4, line_y);
++
++    // Playlists
++    if (! enabled)
++        text_row (ROW_FIRST_PLAYLIST, _(NOT_ENABLED), QString (), dim, false);
++    else if (! s_playlists_loaded)
++        text_row (ROW_FIRST_PLAYLIST, _("Loading..."), QString (), dim, false);
++    else if (s_playlists.empty ())
++        text_row (ROW_FIRST_PLAYLIST, _("No playlists on your server"), QString (), dim, false);
++    else
++    {
++        for (int i = 0; i < playlist_rows () && m_scroll + i < n; i ++)
++        {
++            const NdPlaylistRow & p = s_playlists[m_scroll + i];
++            int r = ROW_FIRST_PLAYLIST + i;
++            bool playing = s_source && ! strcmp (s_source, str_concat ({"playlist:", p.id}));
++            text_row (r, QString (p.name), QString (p.count), playing ? current : normal,
++                      m_hover == r || m_pressed_row == r);
++        }
++    }
++
++    cr.setClipping (false);
++}
++
++bool NavidromeWindow::button_press (QMouseEvent * event)
++{
++    int x = QtCompat::x (event) / config.scale, y = QtCompat::y (event) / config.scale;
++
++    if (event->button () == Qt::RightButton && event->type () == QEvent::MouseButtonPress)
++    {
++        menu_popup (UI_MENU_MAIN, QtCompat::globalX (event), QtCompat::globalY (event), false, false);
++        return true;
++    }
++    if (event->button () != Qt::LeftButton)
++        return false;
++
++    if (y < TOP)
++    {
++        if (x >= WIN_W - 12 && x < WIN_W - 1 && y >= 2 && y < 13)
++        {
++            m_close_pressed = true;
++            queue_draw ();
++            return true;
++        }
++        return Window::button_press (event); // drag the window by its title bar
++    }
++
++    if (event->type () == QEvent::MouseButtonDblClick)
++        return true;
++
++    m_pressed_row = row_at (x, y);
++    if (m_pressed_row == ROW_HEADER || m_pressed_row < 0)
++        m_pressed_row = -1;
++    queue_draw ();
++    return true;
++}
++
++bool NavidromeWindow::button_release (QMouseEvent * event)
++{
++    Window::button_release (event);
++    if (event->button () != Qt::LeftButton)
++        return false;
++
++    int x = QtCompat::x (event) / config.scale, y = QtCompat::y (event) / config.scale;
++
++    if (m_close_pressed)
++    {
++        m_close_pressed = false;
++        if (x >= WIN_W - 12 && x < WIN_W - 1 && y >= 2 && y < 13)
++            view_set_show_navidrome (false);
++        queue_draw ();
++        return true;
++    }
++
++    int r = row_at (x, y);
++    int pressed = m_pressed_row;
++    m_pressed_row = -1;
++    queue_draw ();
++
++    if (r < 0 || r != pressed)
++        return true;
++
++    if (r == ROW_SETTINGS)
++    {
++        // the plugin's own settings dialog, or the plugin list if it's turned off
++        if (nd_enabled ())
++            audqt::plugin_prefs (nd_plugin ());
++        else
++            audqt::prefswin_show_plugin_page (PluginType::General);
++        return true;
++    }
++
++    if (! nd_enabled ())
++    {
++        aud_ui_show_error (_("The Navidrome plugin is turned off. Turn it on under "
++                             "Settings > Plugins > General > Navidrome, and set your server there."));
++        return true;
++    }
++
++    if (r == ROW_SHUFFLE)
++    {
++        if (x >= order_x ())
++        {
++            int next = (order_index (s_order) + 1) % 4;
++            nd_send ("set-order", orders[next].key);
++        }
++        else
++            nd_send ("play");
++    }
++    else if (r == ROW_REFRESH)
++        nd_send ("refresh");
++    else if (r >= ROW_FIRST_PLAYLIST)
++    {
++        int i = m_scroll + r - ROW_FIRST_PLAYLIST;
++        if (i < (int) s_playlists.size ())
++            nd_send ("play-playlist", (const char *) s_playlists[i].id);
++    }
++    return true;
++}
++
++bool NavidromeWindow::motion (QMouseEvent * event)
++{
++    Window::motion (event); // keeps title-bar dragging working
++
++    int x = QtCompat::x (event) / config.scale, y = QtCompat::y (event) / config.scale;
++    int r = row_at (x, y);
++    if (r == ROW_HEADER || (r >= ROW_FIRST_PLAYLIST && r - ROW_FIRST_PLAYLIST + m_scroll >= (int) s_playlists.size ()))
++        r = -1;
++    if (r != m_hover)
++    {
++        m_hover = r;
++        queue_draw ();
++    }
++    return true;
++}
++
++bool NavidromeWindow::leave ()
++{
++    if (m_hover >= 0)
++    {
++        m_hover = -1;
++        queue_draw ();
++    }
++    return true;
++}
++
++bool NavidromeWindow::scroll (QWheelEvent * event)
++{
++    int steps = event->angleDelta ().y () / 120;
++    if (! steps)
++        steps = event->angleDelta ().y () > 0 ? 1 : (event->angleDelta ().y () < 0 ? -1 : 0);
++    m_scroll -= steps * 3;
++    clamp_scroll ();
++    queue_draw ();
++    return true;
++}
++
++/* ------------------------------------------------------------------ */
++/* Resizing (bottom-right grip, in 29px steps like Winamp)              */
++/* ------------------------------------------------------------------ */
++
++static int s_resize_start_h;
++
++static void resize_press ()
++{
++    s_resize_start_h = ((NavidromeWindow *) navidromewin)->height_px ();
++}
++
++static void resize_drag (int x_offset, int y_offset)
++{
++    auto win = (NavidromeWindow *) navidromewin;
++    int h = snap_height (s_resize_start_h + y_offset);
++    if (h != win->height_px ())
++    {
++        win->set_height (h);
++        aud_set_int ("skins", "navidrome_height", h);
++    }
++}
++
++/* ------------------------------------------------------------------ */
++/* Lifecycle and the view hooks                                         */
++/* ------------------------------------------------------------------ */
++
++static void plugin_changed (void *, void *)
++{
++    pull_from_plugin ();
++    if (navidromewin)
++    {
++        ((NavidromeWindow *) navidromewin)->update_font ();
++        navidromewin->queue_draw ();
++    }
++}
++
++void navidromewin_create ()
++{
++    int h = snap_height (aud::max (MIN_H, aud_get_int ("skins", "navidrome_height")));
++    navidromewin = new NavidromeWindow (h);
++    navidromewin->setWindowTitle (_("Navidrome"));
++    navidromewin->setWindowRole ("navidrome");
++
++    s_resize_handle = new DragHandle (20, 20, resize_press, resize_drag);
++    navidromewin->put_widget (false, s_resize_handle, WIN_W - 20, h - 20);
++
++    hook_associate ("navidrome status", plugin_changed, nullptr);
++    hook_associate ("navidrome playlists", plugin_changed, nullptr);
++    hook_associate ("navidrome source", plugin_changed, nullptr);
++
++    navidromewin_skin_changed ();
++    pull_from_plugin ();
++}
++
++void navidromewin_unhook ()
++{
++    hook_dissociate ("navidrome status", plugin_changed);
++    hook_dissociate ("navidrome playlists", plugin_changed);
++    hook_dissociate ("navidrome source", plugin_changed);
++    s_button = nullptr; // owned and deleted by the main window
++    s_playlists.clear ();
++    s_playlists_loaded = false;
++    s_status = s_order = s_source = s_source_name = String ();
++}
++
++void navidromewin_skin_changed ()
++{
++    load_button_override ();
++    scan_gen_letters ();
++    if (s_button)
++        s_button->queue_draw ();
++    if (navidromewin)
++    {
++        ((NavidromeWindow *) navidromewin)->update_font ();
++        navidromewin->queue_draw ();
++    }
++}
++
++void view_set_show_navidrome (bool show)
++{
++    aud_set_bool ("skins", "navidrome_visible", show);
++    hook_call ("skins set navidrome_visible", nullptr);
++
++    view_apply_show_navidrome ();
++}
++
++void view_apply_show_navidrome ()
++{
++    bool show = aud_get_bool ("skins", "navidrome_visible");
++
++    if (show && mainwin->isVisible ())
++    {
++        navidromewin->winId ();
++        navidromewin->windowHandle ()->setTransientParent (mainwin->windowHandle ());
++        navidromewin->show ();
++        navidromewin->activateWindow ();
++
++        nd_send ("fetch-playlists"); // fresh list every time the window opens
++        pull_from_plugin ();
++        navidromewin->queue_draw ();
++    }
++    else
++        navidromewin->hide ();
++
++    navidrome_button_set_active (show);
++}
+diff -ruN a/src/skins-qt/navidrome-win.h b/src/skins-qt/navidrome-win.h
+--- a/src/skins-qt/navidrome-win.h	1970-01-01 01:00:00.000000000 +0100
++++ b/src/skins-qt/navidrome-win.h	2026-10-10 12:53:03.167815469 +0100
+@@ -0,0 +1,35 @@
++/*
++ * navidrome-win.h
++ * Navidrome button and window for the Winamp Classic Interface.
++ * Part of audacious-navidrome. Author: a-adz-1
++ *
++ * This program is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU General Public License as published by the Free Software
++ * Foundation; under version 3 of the License (the same terms as the rest of this
++ * interface). See <http://www.gnu.org/licenses>.
++ */
++
++#ifndef SKINS_NAVIDROME_WIN_H
++#define SKINS_NAVIDROME_WIN_H
++
++class Window;
++class Widget;
++
++extern Window * navidromewin;
++
++/* The 14x15 button that sits between Repeat and the logo. */
++Widget * navidrome_button_create ();
++
++/* Narrows the skin's Shuffle button (once per skin) to make room for the
++ * Navidrome button; returns its new width (46 = unchanged). */
++int navidrome_narrow_shuffle ();
++void navidrome_button_set_active (bool active);
++
++void navidromewin_create ();
++void navidromewin_unhook ();
++void navidromewin_skin_changed ();
++
++void view_set_show_navidrome (bool show);
++void view_apply_show_navidrome ();
++
++#endif
+diff -ruN a/src/skins-qt/plugin.cc b/src/skins-qt/plugin.cc
+--- a/src/skins-qt/plugin.cc	2026-06-07 18:02:36.000000000 +0100
++++ b/src/skins-qt/plugin.cc	2026-10-10 12:53:03.172767297 +0100
+@@ -45,6 +45,7 @@
+ #include "skin.h"
+ #include "window.h"
+ #include "view.h"
++#include "navidrome-win.h"
+ 
+ /* In Qt 6, QApplication::quit() calls closeEvent() on any remaining
+  * windows. To ensure that our cleanup function is called before that
+@@ -61,7 +62,7 @@
+ {
+ public:
+     static constexpr PluginInfo info = {
+-        N_("Winamp Classic Interface"),
++        N_("Winamp Classic Interface (Navidrome)"),
+         PACKAGE,
+         nullptr,
+         & skins_prefs,
+@@ -140,6 +141,7 @@
+     mainwin_create ();
+     equalizerwin_create ();
+     playlistwin_create ();
++    navidromewin_create ();
+ 
+     menu_init (mainwin);
+ 
+@@ -148,6 +150,7 @@
+     {
+         equalizerwin->addAction (action);
+         playlistwin->addAction (action);
++        navidromewin->addAction (action);
+     }
+ 
+     view_apply_skin ();
+@@ -199,12 +202,14 @@
+     mainwin_unhook ();
+     equalizerwin_unhook ();
+     playlistwin_unhook ();
++    navidromewin_unhook ();
+ 
+     timer_remove (TimerRate::Hz4, (TimerFunc) mainwin_update_song_info);
+ 
+     delete mainwin; mainwin = nullptr;
+     delete playlistwin; playlistwin = nullptr;
+     delete equalizerwin; equalizerwin = nullptr;
++    delete navidromewin; navidromewin = nullptr;
+ }
+ 
+ QtSkinsProxy::~QtSkinsProxy ()
+diff -ruN a/src/skins-qt/skin.cc b/src/skins-qt/skin.cc
+--- a/src/skins-qt/skin.cc	2026-06-07 18:02:36.000000000 +0100
++++ b/src/skins-qt/skin.cc	2026-10-10 12:53:03.173172958 +0100
+@@ -217,6 +217,15 @@
+     return true;
+ }
+ 
++static void skin_load_optional (QImage & image, const char * path, const char * name)
++{
++    StringBuf filename = skin_pixmap_locate (path, name, nullptr);
++    if (filename)
++        image.load ((const char *) filename);
++    if (! image.isNull () && image.format () != QImage::Format_RGB32)
++        image = image.convertToFormat (QImage::Format_RGB32);
++}
++
+ static bool skin_load_data (const char * path)
+ {
+     AUDDBG ("Attempt to load skin \"%s\"\n", path);
+@@ -247,6 +256,8 @@
+         skin_load_pl_colors (path);
+         skin_load_viscolor (path);
+         skin_load_masks (path);
++        skin_load_optional (skin.gen, path, "gen");
++        skin_load_optional (skin.navidrome_button, path, "navidrome");
+     }
+     else
+         AUDDBG ("Skin loading failed\n");
+diff -ruN a/src/skins-qt/skin.h b/src/skins-qt/skin.h
+--- a/src/skins-qt/skin.h	2026-06-07 18:02:36.000000000 +0100
++++ b/src/skins-qt/skin.h	2026-10-10 12:53:03.173201061 +0100
+@@ -172,6 +172,9 @@
+     uint32_t vis_colors[24] {};
+ 
+     QImage pixmaps[SKIN_PIXMAP_COUNT];
++    QImage gen;               /* optional GEN.BMP (frame for extra windows) */
++    QImage navidrome_button;  /* optional navidrome.bmp/png (14x60 button art) */
++    int shuffle_width = 0;    /* Shuffle button width after narrowing (0 = not done yet) */
+     Index<QRect> masks[SKIN_MASK_COUNT];
+ };
+ 
+diff -ruN a/src/skins-qt/skins_cfg.cc b/src/skins-qt/skins_cfg.cc
+--- a/src/skins-qt/skins_cfg.cc	2026-06-07 18:02:36.000000000 +0100
++++ b/src/skins-qt/skins_cfg.cc	2026-10-10 12:53:03.173362456 +0100
+@@ -59,6 +59,10 @@
+     "active_titlebar_any", "TRUE",
+     "always_on_top", "FALSE",
+     "double_size", "FALSE",
++    "navidrome_visible", "FALSE",
++    "navidrome_x", "20",
++    "navidrome_y", "252",
++    "navidrome_height", "145",
+     "equalizer_shaded", "FALSE",
+     "equalizer_visible", "FALSE",
+     "equalizer_x", "20",
+@@ -112,6 +116,8 @@
+     /* windows */
+     {"equalizer_x", & config.equalizer_x},
+     {"equalizer_y", & config.equalizer_y},
++    {"navidrome_x", & config.navidrome_x},
++    {"navidrome_y", & config.navidrome_y},
+     {"player_x", & config.player_x},
+     {"player_y", & config.player_y},
+     {"playlist_x", & config.playlist_x},
+diff -ruN a/src/skins-qt/skins_cfg.h b/src/skins-qt/skins_cfg.h
+--- a/src/skins-qt/skins_cfg.h	2026-06-07 18:02:36.000000000 +0100
++++ b/src/skins-qt/skins_cfg.h	2026-10-10 12:53:03.173391786 +0100
+@@ -27,6 +27,7 @@
+     int player_x, player_y;
+     int equalizer_x, equalizer_y;
+     int playlist_x, playlist_y;
++    int navidrome_x, navidrome_y;
+     int playlist_width, playlist_height;
+     int scale;
+     bool autoscroll;
+diff -ruN a/src/skins-qt/view.cc b/src/skins-qt/view.cc
+--- a/src/skins-qt/view.cc	2026-06-07 18:02:36.000000000 +0100
++++ b/src/skins-qt/view.cc	2026-10-10 12:53:03.174253252 +0100
+@@ -35,6 +35,7 @@
+ #include "plugin-window.h"
+ #include "skins_cfg.h"
+ #include "equalizer.h"
++#include "navidrome-win.h"
+ #include "main.h"
+ #include "vis-callbacks.h"
+ #include "playlistwin.h"
+@@ -114,6 +115,7 @@
+ 
+     view_apply_show_playlist ();
+     view_apply_show_equalizer ();
++    view_apply_show_navidrome ();
+ 
+     start_stop_visual (false);
+ }
+@@ -258,18 +260,21 @@
+     bool mainwin_visible = mainwin->isVisible ();
+     bool equalizer_visible = equalizerwin->isVisible ();
+     bool playlist_visible = playlistwin->isVisible ();
++    bool navidrome_visible = navidromewin->isVisible ();
+ 
+     if (aud_get_bool ("skins", "always_on_top"))
+     {
+         mainwin->setWindowFlags (mainwin->windowFlags () | Qt::WindowStaysOnTopHint);
+         equalizerwin->setWindowFlags (equalizerwin->windowFlags () | Qt::WindowStaysOnTopHint);
+         playlistwin->setWindowFlags (playlistwin->windowFlags () | Qt::WindowStaysOnTopHint);
++        navidromewin->setWindowFlags (navidromewin->windowFlags () | Qt::WindowStaysOnTopHint);
+     }
+     else
+     {
+         mainwin->setWindowFlags (mainwin->windowFlags () & ~Qt::WindowStaysOnTopHint);
+         equalizerwin->setWindowFlags (equalizerwin->windowFlags () & ~Qt::WindowStaysOnTopHint);
+         playlistwin->setWindowFlags (playlistwin->windowFlags () & ~Qt::WindowStaysOnTopHint);
++        navidromewin->setWindowFlags (navidromewin->windowFlags () & ~Qt::WindowStaysOnTopHint);
+     }
+ 
+     if (mainwin_visible)
+@@ -278,6 +283,8 @@
+         equalizerwin->show ();
+     if (playlist_visible)
+         playlistwin->show ();
++    if (navidrome_visible)
++        navidromewin->show ();
+ 
+     mainwin_menurow->refresh ();
+ }
+@@ -361,4 +368,5 @@
+     mainwin->queue_draw ();
+     equalizerwin->queue_draw ();
+     playlistwin->queue_draw ();
++    navidromewin_skin_changed ();
+ }
+diff -ruN a/src/skins-qt/window.h b/src/skins-qt/window.h
+--- a/src/skins-qt/window.h	2026-06-07 18:02:36.000000000 +0100
++++ b/src/skins-qt/window.h	2026-10-10 12:53:03.175054649 +0100
+@@ -30,6 +30,7 @@
+     WINDOW_MAIN,
+     WINDOW_EQ,
+     WINDOW_PLAYLIST,
++    WINDOW_NAVIDROME,
+     N_WINDOWS
+ };
+ 

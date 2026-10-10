@@ -1,0 +1,9 @@
+# makepkg output
+/src/
+/pkg/
+/audacious-plugins/
+*.pkg.tar.*
+*.log
+# local builds
+*.so
+/build/
