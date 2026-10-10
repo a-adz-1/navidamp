@@ -152,9 +152,8 @@ Your password is stored in Audacious's config file
 
 ## Credits and licence
 
-- `navidrome.cc` is **MIT** licensed.
-- The interface patch is **GPL-3.0**, the same as the Winamp Classic interface
-  it modifies, which is © the Audacious developers.
+- navidamp is licensed under the **GNU GPL, version 3**, the same licence as
+  the Winamp Classic interface it builds on (© the Audacious developers).
 - The screenshots show the Winamp Classic CM skin with a demo library of
   public-domain classical pieces and Kevin MacLeod's royalty-free tracks
   ([incompetech.com](https://incompetech.com), CC BY 4.0). No music is

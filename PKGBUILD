@@ -1,10 +1,10 @@
 # Maintainer: a-adz-1
 pkgname=navidamp
 pkgver=1.2.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Navidrome for Audacious: shuffle your library or playlists, with a Navidrome button and window for the Winamp Classic interface"
 arch=('x86_64')
-license=('MIT' 'GPL-3.0-only')
+license=('GPL-3.0-only')
 url="https://github.com/a-adz-1/navidamp"
 depends=('audacious' 'audacious-plugins' 'qt6-base' 'glib2')
 makedepends=('git' 'pkgconf')
@@ -15,9 +15,9 @@ _audver=4.6.1
 _audcommit=a7f3a1d1ad564b764137a3583cdff440d0230762  # tag audacious-plugins-4.6.1
 
 source=('navidrome.cc' 'Makefile'
-        'interface.mk' 'interface-config.h' 'navidrome-interface.patch' 'LICENSE'
+        'interface.mk' 'interface-config.h' 'navidrome-interface.patch'
         "audacious-plugins::git+https://github.com/audacious-media-player/audacious-plugins.git#commit=${_audcommit}")
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd audacious-plugins
@@ -37,5 +37,4 @@ package() {
   cd "$srcdir"
   make DESTDIR="$pkgdir" install
   make -f interface.mk AP_SRC="$srcdir/audacious-plugins" DESTDIR="$pkgdir" install
-  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
