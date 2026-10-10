@@ -1,7 +1,7 @@
 # Maintainer: a-adz-1
 pkgname=navidamp
-pkgver=1.2.0
-pkgrel=2
+pkgver=1.3.0
+pkgrel=1
 pkgdesc="Navidrome for Audacious: shuffle your library or playlists, with a Navidrome button and window for the Winamp Classic interface"
 arch=('x86_64')
 license=('GPL-3.0-only')

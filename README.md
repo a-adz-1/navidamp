@@ -17,6 +17,9 @@ equaliser.
   click loads and shuffles it.
 - **Refresh without stopping:** new albums are added and deleted tracks are
   dropped while the music keeps playing.
+- **Quick with big libraries:** your library is fetched four pages at a
+  time, with a running count and percentage in the Navidrome window
+  (`Loading 20,000 / 46,809 (42%)`).
 - **Pick the list order:** by folder (like importing a local library), by
   artist, by title, or scrambled. Playback is shuffled whichever you pick.
 - **Matches your skin:** the window uses your skin's frame, title lettering,

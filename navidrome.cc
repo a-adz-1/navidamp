@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <climits>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -42,6 +43,12 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#ifndef NAVIDROME_TRANSPORT
+// before the libaudcore headers, whose translation macros clash with Qt's
+#include <QMessageBox>
+#include <libaudqt/libaudqt.h>
+#endif
 
 #include <glib.h>
 
@@ -554,25 +561,111 @@ static void add_songs(const JVal & list, std::vector<Song> & songs)
     }
 }
 
+static void set_status(const std::string & text); // defined with the jobs below
+
+/* "46,809" */
+static std::string with_commas(int n)
+{
+    std::string s = std::to_string(n);
+    for (int i = (int)s.size() - 3; i > 0; i -= 3)
+        s.insert(i, ",");
+    return s;
+}
+
+/* How many songs Navidrome has, for the progress display (0 if it doesn't say). */
+static int library_size()
+{
+    JVal doc;
+    const JVal * resp = nullptr;
+    std::string err;
+    if (!api_call("getScanStatus", "", doc, resp, err))
+        return 0;
+    const JVal * st = resp->get("scanStatus");
+    return st ? st->num("count") : 0;
+}
+
+/* The whole library, 500 songs per request, four requests at a time.
+ * Progress goes to the status line as it arrives. */
 static bool fetch_songs(std::vector<Song> & songs, std::string & err)
 {
-    const int page = 500;
-    for (int offset = 0;; offset += page)
-    {
-        JVal doc;
-        const JVal * resp = nullptr;
-        std::string params = "query=&artistCount=0&albumCount=0&songCount=" +
-                             std::to_string(page) + "&songOffset=" + std::to_string(offset);
-        if (!api_call("search3", params, doc, resp, err))
-            return false;
-        const JVal * result = resp->get("searchResult3");
-        const JVal * list = result ? result->get("song") : nullptr;
-        int got = list && list->type == JVal::Arr ? (int)list->arr.size() : 0;
-        if (got)
-            add_songs(*list, songs);
-        if (got < page)
-            return true;
-    }
+    const int page = 500, workers = 4;
+    const int total = library_size();
+
+    std::mutex lock;                         // guards pages, err, failed
+    std::vector<std::vector<Song>> pages;
+    bool failed = false;
+    std::atomic<int> next{0}, have{0}, last{INT_MAX};
+
+    auto report = [&](int n) {
+        char buf[96];
+        if (total > 0)
+            snprintf(buf, sizeof buf, "Loading %s / %s (%d%%)", with_commas(n).c_str(),
+                     with_commas(total).c_str(), aud::min(100, (int)(100.0 * n / total)));
+        else
+            snprintf(buf, sizeof buf, "Loading... %s songs", with_commas(n).c_str());
+        set_status(buf);
+    };
+
+    auto work = [&]() {
+        while (true)
+        {
+            int i = next++;
+            if (i > last)
+                return;
+            {
+                std::lock_guard<std::mutex> g(lock);
+                if (failed)
+                    return;
+            }
+
+            JVal doc;
+            const JVal * resp = nullptr;
+            std::string my_err;
+            std::string params = "query=&artistCount=0&albumCount=0&songCount=" +
+                                 std::to_string(page) + "&songOffset=" + std::to_string(i * page);
+            if (!api_call("search3", params, doc, resp, my_err))
+            {
+                std::lock_guard<std::mutex> g(lock);
+                if (!failed)
+                    failed = true, err = my_err;
+                return;
+            }
+            const JVal * result = resp->get("searchResult3");
+            const JVal * list = result ? result->get("song") : nullptr;
+            std::vector<Song> got;
+            if (list && list->type == JVal::Arr)
+                add_songs(*list, got);
+
+            int n = (int)got.size();
+            if (n < page) // the end of the library: nobody needs pages after this one
+            {
+                int cur = last;
+                while (i < cur && !last.compare_exchange_weak(cur, i))
+                    ;
+            }
+            {
+                std::lock_guard<std::mutex> g(lock);
+                if ((int)pages.size() <= i)
+                    pages.resize(i + 1);
+                pages[i] = std::move(got);
+            }
+            report(have += n);
+        }
+    };
+
+    report(0);
+    std::vector<std::thread> pool;
+    for (int w = 0; w < workers; w++)
+        pool.emplace_back(work);
+    for (auto & th : pool)
+        th.join();
+
+    if (failed)
+        return false;
+    for (int i = 0; i < (int)pages.size() && i <= last; i++)
+        for (auto & s : pages[i])
+            songs.push_back(std::move(s));
+    return true;
 }
 
 struct NdPlaylist
@@ -776,6 +869,7 @@ static QueuedFunc s_startup;   // optional refresh shortly after Audacious start
 static String s_status;                    // shown in the Navidrome window
 static std::vector<NdPlaylist> s_playlists;
 static bool s_playlists_loaded = false;
+static bool s_playlists_failed = false;   // the last fetch didn't work
 
 static void set_status_now(const std::string & text)
 {
@@ -847,6 +941,7 @@ static void apply_load(const std::vector<Song> & songs, const std::string & labe
     Playlist p = find_playlist();
     if (!p.exists())
         p = Playlist::new_playlist();
+    set_status_now("Adding " + with_commas(items.len()) + " tracks to the playlist...");
     p.remove_all_entries();
     set_label_title(p, label, items.len());
     aud_set_str(CFG, "source", source.c_str());
@@ -1018,6 +1113,7 @@ static void fetch_playlists_async()
         return;
     if (s_pl_worker.joinable())
         s_pl_worker.join();
+    s_playlists_failed = false;
 
     s_pl_worker = std::thread([]() {
         std::vector<NdPlaylist> list;
@@ -1036,7 +1132,10 @@ static void fetch_playlists_async()
                     set_status_now(""); // the server is reachable again
             }
             else
+            {
+                s_playlists_failed = true;
                 set_status_now("Error: " + err);
+            }
             s_pl_busy = false;
             hook_call("navidrome playlists", nullptr);
         });
@@ -1047,15 +1146,26 @@ static void fetch_playlists_async()
 /* Plugin, menus and settings page                                      */
 /* ------------------------------------------------------------------ */
 
+/* A plain information popup (or a warning) when Audacious is running its Qt
+ * interface; Audacious's error popup is the only option otherwise. */
+static void tell(const std::string & text, bool ok)
+{
+    if (aud_get_mainloop_type() == MainloopType::Qt)
+        audqt::simple_message(_("Navidrome"), text.c_str(),
+                              ok ? QMessageBox::Information : QMessageBox::Warning);
+    else
+        aud_ui_show_error(("Navidrome: " + text).c_str());
+}
+
 static void test_connection()
 {
     std::string err;
     JVal doc;
     const JVal * resp = nullptr;
     if (api_call("ping", "", doc, resp, err))
-        aud_ui_show_error(_("Navidrome: connected successfully."));
+        tell(_("Connected to your Navidrome server."), true);
     else
-        aud_ui_show_error(("Navidrome: " + err).c_str());
+        tell(err, false);
 }
 
 static const PreferencesWidget widgets[] = {
@@ -1141,6 +1251,7 @@ public:
         s_pl_busy = false;
         s_playlists.clear();
         s_playlists_loaded = false;
+        s_playlists_failed = false;
         s_status = String();
     }
 
@@ -1149,7 +1260,8 @@ public:
      *   refresh         re-sync whatever is loaded (library or playlist)
      *   play-playlist   data: Navidrome playlist id
      *   fetch-playlists fetch the playlist list; "navidrome playlists" hook fires when done
-     *   get-playlists   data: Index<String> * to fill with id, name, track count triples
+     *   get-playlists   data: Index<String> * to fill with id, name, track count triples;
+ *                   returns 0 when loaded, 1 while still loading, 2 if loading failed
      *   get-status      data: String * (status line; "" when idle)
      *   get-info        data: Index<String> * to fill with: order, source, source name, busy, loaded
      *   set-order       data: order name (used by the next "play" with null data) */
@@ -1193,7 +1305,7 @@ public:
                 out->append(String(p.name.c_str()));
                 out->append(String(int_to_str(p.count)));
             }
-            return s_playlists_loaded ? 0 : 1;
+            return s_playlists_loaded ? 0 : s_playlists_failed ? 2 : 1;
         }
         if (!strcmp(code, "get-status") && data)
         {
