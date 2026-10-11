@@ -1,6 +1,6 @@
 diff -ruN a/src/skins-qt/button.h b/src/skins-qt/button.h
 --- a/src/skins-qt/button.h	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/button.h	2026-10-10 13:11:11.162098191 +0100
++++ b/src/skins-qt/button.h	2026-10-11 09:47:14.707303406 +0100
 @@ -52,6 +52,7 @@
  
      bool get_active () { return m_active; }
@@ -11,7 +11,7 @@ diff -ruN a/src/skins-qt/button.h b/src/skins-qt/button.h
      enum Type {Normal, Toggle, Small};
 diff -ruN a/src/skins-qt/main.cc b/src/skins-qt/main.cc
 --- a/src/skins-qt/main.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/main.cc	2026-10-10 13:11:11.162468697 +0100
++++ b/src/skins-qt/main.cc	2026-10-11 09:47:14.708831303 +0100
 @@ -46,6 +46,7 @@
  #include "skins_cfg.h"
  #include "equalizer.h"
@@ -75,7 +75,7 @@ diff -ruN a/src/skins-qt/main.cc b/src/skins-qt/main.cc
      mainwin_vis = new SkinnedVis;
 diff -ruN a/src/skins-qt/menus.cc b/src/skins-qt/menus.cc
 --- a/src/skins-qt/menus.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/menus.cc	2026-10-10 13:11:11.162630848 +0100
++++ b/src/skins-qt/menus.cc	2026-10-11 09:47:14.709513554 +0100
 @@ -35,6 +35,7 @@
  #include "actions-playlist.h"
  #include "main.h"
@@ -94,8 +94,8 @@ diff -ruN a/src/skins-qt/menus.cc b/src/skins-qt/menus.cc
      audqt::MenuSep (),
 diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 --- a/src/skins-qt/navidrome-win.cc	1970-01-01 01:00:00.000000000 +0100
-+++ b/src/skins-qt/navidrome-win.cc	2026-10-10 13:11:11.161981079 +0100
-@@ -0,0 +1,1106 @@
++++ b/src/skins-qt/navidrome-win.cc	2026-10-11 09:47:14.706201347 +0100
+@@ -0,0 +1,1135 @@
 +/*
 + * navidrome-win.cc
 + * Navidrome button and window for the Winamp Classic Interface.
@@ -183,7 +183,7 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +static std::vector<NdPlaylistRow> s_playlists;
 +static bool s_playlists_loaded = false;
 +static bool s_playlists_failed = false;
-+static String s_status, s_order, s_source, s_source_name;
++static String s_status, s_pl_status, s_order, s_source, s_source_name;
 +static bool s_busy = false;
 +static bool s_loaded = false; // a Navidrome playlist exists in Audacious
 +
@@ -191,7 +191,7 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +{
 +    s_playlists.clear ();
 +    s_playlists_loaded = s_playlists_failed = false;
-+    s_order = s_source = s_source_name = String ();
++    s_order = s_source = s_source_name = s_pl_status = String ();
 +    s_busy = s_loaded = false;
 +
 +    if (! nd_enabled ())
@@ -203,6 +203,9 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +    String status;
 +    nd_send ("get-status", & status);
 +    s_status = status;
++    String pl_status;
++    nd_send ("get-playlist-status", & pl_status);
++    s_pl_status = pl_status;
 +
 +    Index<String> info;
 +    nd_send ("get-info", & info);
@@ -769,7 +772,7 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +/* The window                                                           */
 +/* ------------------------------------------------------------------ */
 +
-+enum { ROW_SHUFFLE, ROW_REFRESH, ROW_SETTINGS, ROW_HEADER, ROW_FIRST_PLAYLIST };
++enum { ROW_SHUFFLE, ROW_REFRESH, ROW_REFRESH_PL, ROW_SETTINGS, ROW_HEADER, ROW_FIRST_PLAYLIST };
 +
 +static const struct { const char * key, * label; } orders[] = {
 +    {"folder", N_("by folder")},
@@ -912,12 +915,11 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +              m_hover == ROW_SHUFFLE || m_pressed_row == ROW_SHUFFLE);
 +
 +    // Refresh, with the status on the right
-+    QString status = s_status ? QString (s_status) : QString ();
-+    if (status.isEmpty () && enabled && s_loaded && s_source)
-+        status = s_source[0] ? QString (_("Now: %1")).arg ((const char *) s_source_name)
-+                             : QString (_("Now: whole library"));
-+    text_row (ROW_REFRESH, _("Refresh"), status, normal,
++    // Refresh rows, each with what its last run did (and when) on the right
++    text_row (ROW_REFRESH, _("Refresh Library"), s_status ? QString (s_status) : QString (), normal,
 +              m_hover == ROW_REFRESH || m_pressed_row == ROW_REFRESH);
++    text_row (ROW_REFRESH_PL, _("Refresh Playlists"), s_pl_status ? QString (s_pl_status) : QString (),
++              normal, m_hover == ROW_REFRESH_PL || m_pressed_row == ROW_REFRESH_PL);
 +
 +    // Server settings, with the server it's pointed at on the right
 +    QString server = QString ((const char *) aud_get_str ("navidrome", "url"));
@@ -942,8 +944,26 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +    if (! enabled)
 +        text_row (ROW_FIRST_PLAYLIST, _(NOT_ENABLED), QString (), dim, false);
 +    else if (s_playlists_failed)
-+        text_row (ROW_FIRST_PLAYLIST, _("Couldn't load playlists (see above)"),
-+                  QString (), dim, false);
++    {
++        // the reason, word-wrapped over the rows below
++        text_row (ROW_FIRST_PLAYLIST, _("Couldn't load your playlists:"), QString (), dim, false);
++        QString why = s_pl_status ? QString (s_pl_status) : QString ();
++        why.remove (QRegularExpression ("^Error: "));
++        int width = WIN_W - LEFT - RIGHT - 6, r = ROW_FIRST_PLAYLIST + 1;
++        QString line;
++        for (const QString & word : why.split (' ', Qt::SkipEmptyParts))
++        {
++            QString next = line.isEmpty () ? word : line + ' ' + word;
++            if (fm.horizontalAdvance (next) > width && ! line.isEmpty () && r < rows () - 1)
++            {
++                text_row (r ++, line, QString (), normal, false);
++                next = word;
++            }
++            line = next;
++        }
++        if (! line.isEmpty ())
++            text_row (r, line, QString (), normal, false);
++    }
 +    else if (! s_playlists_loaded)
 +        text_row (ROW_FIRST_PLAYLIST, _("Loading..."), QString (), dim, false);
 +    else if (s_playlists.empty ())
@@ -1048,6 +1068,8 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +        else
 +            nd_send ("play");
 +    }
++    else if (r == ROW_REFRESH_PL)
++        nd_send ("refresh-playlists");
 +    else if (r == ROW_REFRESH)
 +        nd_send ("refresh");
 +    else if (r >= ROW_FIRST_PLAYLIST)
@@ -1070,6 +1092,13 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +    if (r != m_hover)
 +    {
 +        m_hover = r;
++        // the full status, in case it doesn't fit
++        QString tip;
++        if (r == ROW_REFRESH && s_status)
++            tip = QString (s_status);
++        else if (r == ROW_REFRESH_PL && s_pl_status)
++            tip = QString (s_pl_status);
++        setToolTip (tip);
 +        queue_draw ();
 +    }
 +    return true;
@@ -1158,7 +1187,7 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +    s_button = nullptr; // owned and deleted by the main window
 +    s_playlists.clear ();
 +    s_playlists_loaded = false;
-+    s_status = s_order = s_source = s_source_name = String ();
++    s_status = s_pl_status = s_order = s_source = s_source_name = String ();
 +}
 +
 +void navidromewin_skin_changed ()
@@ -1193,7 +1222,7 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +        navidromewin->show ();
 +        navidromewin->activateWindow ();
 +
-+        nd_send ("fetch-playlists"); // fresh list every time the window opens
++        nd_send ("fetch-playlists"); // only if it isn't already loaded or on its way
 +        pull_from_plugin ();
 +        navidromewin->queue_draw ();
 +    }
@@ -1204,7 +1233,7 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +}
 diff -ruN a/src/skins-qt/navidrome-win.h b/src/skins-qt/navidrome-win.h
 --- a/src/skins-qt/navidrome-win.h	1970-01-01 01:00:00.000000000 +0100
-+++ b/src/skins-qt/navidrome-win.h	2026-10-10 13:11:11.161915953 +0100
++++ b/src/skins-qt/navidrome-win.h	2026-10-11 09:47:14.706160161 +0100
 @@ -0,0 +1,35 @@
 +/*
 + * navidrome-win.h
@@ -1243,7 +1272,7 @@ diff -ruN a/src/skins-qt/navidrome-win.h b/src/skins-qt/navidrome-win.h
 +#endif
 diff -ruN a/src/skins-qt/plugin.cc b/src/skins-qt/plugin.cc
 --- a/src/skins-qt/plugin.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/plugin.cc	2026-10-10 13:11:11.163050856 +0100
++++ b/src/skins-qt/plugin.cc	2026-10-11 09:47:14.711140513 +0100
 @@ -45,6 +45,7 @@
  #include "skin.h"
  #include "window.h"
@@ -1294,7 +1323,7 @@ diff -ruN a/src/skins-qt/plugin.cc b/src/skins-qt/plugin.cc
  QtSkinsProxy::~QtSkinsProxy ()
 diff -ruN a/src/skins-qt/skin.cc b/src/skins-qt/skin.cc
 --- a/src/skins-qt/skin.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/skin.cc	2026-10-10 13:11:11.163143666 +0100
++++ b/src/skins-qt/skin.cc	2026-10-11 09:47:14.711607258 +0100
 @@ -217,6 +217,15 @@
      return true;
  }
@@ -1322,7 +1351,7 @@ diff -ruN a/src/skins-qt/skin.cc b/src/skins-qt/skin.cc
          AUDDBG ("Skin loading failed\n");
 diff -ruN a/src/skins-qt/skin.h b/src/skins-qt/skin.h
 --- a/src/skins-qt/skin.h	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/skin.h	2026-10-10 13:11:11.163170532 +0100
++++ b/src/skins-qt/skin.h	2026-10-11 09:47:14.711640110 +0100
 @@ -172,6 +172,9 @@
      uint32_t vis_colors[24] {};
  
@@ -1335,7 +1364,7 @@ diff -ruN a/src/skins-qt/skin.h b/src/skins-qt/skin.h
  
 diff -ruN a/src/skins-qt/skins_cfg.cc b/src/skins-qt/skins_cfg.cc
 --- a/src/skins-qt/skins_cfg.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/skins_cfg.cc	2026-10-10 13:11:11.163193713 +0100
++++ b/src/skins-qt/skins_cfg.cc	2026-10-11 09:47:14.711663408 +0100
 @@ -59,6 +59,10 @@
      "active_titlebar_any", "TRUE",
      "always_on_top", "FALSE",
@@ -1343,7 +1372,7 @@ diff -ruN a/src/skins-qt/skins_cfg.cc b/src/skins-qt/skins_cfg.cc
 +    "navidrome_visible", "FALSE",
 +    "navidrome_x", "20",
 +    "navidrome_y", "252",
-+    "navidrome_height", "145",
++    "navidrome_height", "174",
      "equalizer_shaded", "FALSE",
      "equalizer_visible", "FALSE",
      "equalizer_x", "20",
@@ -1358,7 +1387,7 @@ diff -ruN a/src/skins-qt/skins_cfg.cc b/src/skins-qt/skins_cfg.cc
      {"playlist_x", & config.playlist_x},
 diff -ruN a/src/skins-qt/skins_cfg.h b/src/skins-qt/skins_cfg.h
 --- a/src/skins-qt/skins_cfg.h	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/skins_cfg.h	2026-10-10 13:11:11.163218611 +0100
++++ b/src/skins-qt/skins_cfg.h	2026-10-11 09:47:14.711686651 +0100
 @@ -27,6 +27,7 @@
      int player_x, player_y;
      int equalizer_x, equalizer_y;
@@ -1369,7 +1398,7 @@ diff -ruN a/src/skins-qt/skins_cfg.h b/src/skins-qt/skins_cfg.h
      bool autoscroll;
 diff -ruN a/src/skins-qt/view.cc b/src/skins-qt/view.cc
 --- a/src/skins-qt/view.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/view.cc	2026-10-10 13:11:11.163411420 +0100
++++ b/src/skins-qt/view.cc	2026-10-11 09:47:14.712447940 +0100
 @@ -35,6 +35,7 @@
  #include "plugin-window.h"
  #include "skins_cfg.h"
@@ -1425,7 +1454,7 @@ diff -ruN a/src/skins-qt/view.cc b/src/skins-qt/view.cc
  }
 diff -ruN a/src/skins-qt/window.h b/src/skins-qt/window.h
 --- a/src/skins-qt/window.h	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/window.h	2026-10-10 13:11:11.163665098 +0100
++++ b/src/skins-qt/window.h	2026-10-11 09:47:14.713294870 +0100
 @@ -30,6 +30,7 @@
      WINDOW_MAIN,
      WINDOW_EQ,

@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <climits>
 #include <chrono>
 #include <cstdio>
@@ -599,10 +600,10 @@ static bool fetch_songs(std::vector<Song> & songs, std::string & err)
     auto report = [&](int n) {
         char buf[96];
         if (total > 0)
-            snprintf(buf, sizeof buf, "Loading %s / %s (%d%%)", with_commas(n).c_str(),
+            snprintf(buf, sizeof buf, "%s / %s (%d%%)", with_commas(n).c_str(),
                      with_commas(total).c_str(), aud::min(100, (int)(100.0 * n / total)));
         else
-            snprintf(buf, sizeof buf, "Loading... %s songs", with_commas(n).c_str());
+            snprintf(buf, sizeof buf, "%s songs so far", with_commas(n).c_str());
         set_status(buf);
     };
 
@@ -860,21 +861,45 @@ static void post_main(std::function<void()> f)
 
 static std::atomic<bool> s_busy{false};    // a library/playlist load or refresh is running
 static std::thread s_worker;
-static std::atomic<bool> s_pl_busy{false}; // the list of Navidrome playlists is being fetched
-static std::thread s_pl_worker;
 static QueuedFunc s_wait_add;  // waits for Audacious to finish adding entries
 static QueuedFunc s_startup;   // optional refresh shortly after Audacious starts
+static QueuedFunc s_pl_startup;
+
+// Fetching the list of Navidrome playlists. Every request gets a new number and
+// only the newest one's answer is used, so asking again always works, even if
+// an earlier request is still out.
+static std::atomic<int> s_pl_gen{0};
+static std::atomic<int> s_pl_threads{0};  // requests still out (waited for on shutdown)
+static std::atomic<bool> s_pl_busy{false};
 
 // Main thread only:
-static String s_status;                    // shown in the Navidrome window
+static String s_status;                    // library: loading progress or the last result
+static String s_pl_status;                 // playlists: loading, how many, or the error
 static std::vector<NdPlaylist> s_playlists;
 static bool s_playlists_loaded = false;
 static bool s_playlists_failed = false;   // the last fetch didn't work
+
+/* "09:41" - status lines say when something happened, not that it's current */
+static std::string clock_now()
+{
+    GDateTime * now = g_date_time_new_now_local();
+    gchar * s = g_date_time_format(now, "%H:%M");
+    std::string out = s ? s : "";
+    g_free(s);
+    g_date_time_unref(now);
+    return out;
+}
 
 static void set_status_now(const std::string & text)
 {
     s_status = String(text.c_str());
     hook_call("navidrome status", nullptr);
+}
+
+static void set_pl_status_now(const std::string & text)
+{
+    s_pl_status = String(text.c_str());
+    hook_call("navidrome playlists", nullptr);
 }
 
 static void set_status(const std::string & text) // from any thread
@@ -926,7 +951,7 @@ static void finish_load(Playlist p)
             p.start_playback();
         }
         s_busy = false;
-        set_status_now("");
+        set_status_now("Loaded " + clock_now());
     });
 }
 
@@ -941,7 +966,7 @@ static void apply_load(const std::vector<Song> & songs, const std::string & labe
     Playlist p = find_playlist();
     if (!p.exists())
         p = Playlist::new_playlist();
-    set_status_now("Adding " + with_commas(items.len()) + " tracks to the playlist...");
+    set_status_now("Adding " + with_commas(items.len()) + " tracks...");
     p.remove_all_entries();
     set_label_title(p, label, items.len());
     aud_set_str(CFG, "source", source.c_str());
@@ -1040,9 +1065,12 @@ static void refresh_job(std::string source)
         if (added)
             p.insert_items(-1, std::move(items), false);
         s_busy = false;
-        char status[96] = "Up to date";
+        // what this refresh found, and when - not a claim that nothing has changed since
+        char status[96];
         if (added || removed)
-            snprintf(status, sizeof status, "Refreshed: %d new, %d removed", added, removed);
+            snprintf(status, sizeof status, "+%d new, -%d removed (%s)", added, removed, clock_now().c_str());
+        else
+            snprintf(status, sizeof status, "No changes (%s)", clock_now().c_str());
         set_status_now(status);
     });
 }
@@ -1102,44 +1130,58 @@ static void play_playlist(const std::string & id)
     start_job([id]() { playlist_job(id); }, "Loading playlist...");
 }
 
-static void fetch_playlists_async()
+/* Fetches the list of Navidrome playlists in the background. With force=false
+ * it does nothing if the list is already loaded or on its way. */
+static void fetch_playlists_async(bool force = true)
 {
     if (base_url().empty())
     {
-        set_status_now("Set up your server in Settings > Plugins > Navidrome");
+        set_pl_status_now("Set up your server first");
         return;
     }
-    if (s_pl_busy.exchange(true))
+    if (!force && (s_playlists_loaded || s_pl_busy))
         return;
-    if (s_pl_worker.joinable())
-        s_pl_worker.join();
-    s_playlists_failed = false;
 
-    s_pl_worker = std::thread([]() {
+    int gen = ++s_pl_gen;
+    s_pl_busy = true;
+    set_pl_status_now("Loading...");
+    s_pl_threads++;
+
+    std::thread([gen]() {
         std::vector<NdPlaylist> list;
         std::string err;
         bool ok = fetch_playlists(list, err);
+        if (!ok)
+            AUDWARN("navidrome: couldn't load playlists: %s\n", err.c_str());
         std::sort(list.begin(), list.end(), [](const NdPlaylist & a, const NdPlaylist & b) {
             return fold(a.name) < fold(b.name);
         });
         auto shared = std::make_shared<std::vector<NdPlaylist>>(std::move(list));
-        post_main([shared, ok, err]() {
+        post_main([shared, ok, err, gen]() {
+            if (gen != s_pl_gen)
+                return; // a newer request has been made since; its answer wins
+            s_pl_busy = false;
             if (ok)
             {
                 s_playlists = std::move(*shared);
                 s_playlists_loaded = true;
-                if (s_status && str_has_prefix_nocase(s_status, "Error"))
-                    set_status_now(""); // the server is reachable again
+                s_playlists_failed = false;
+                int n = (int)s_playlists.size();
+                set_pl_status_now(std::to_string(n) + (n == 1 ? " playlist (" : " playlists (") +
+                                  clock_now() + ")");
             }
             else
             {
-                s_playlists_failed = true;
-                set_status_now("Error: " + err);
+                // keep any list we already had; just say this attempt failed
+                s_playlists_failed = !s_playlists_loaded;
+                std::string why = err;
+                if (why.compare(0, 16, "Navidrome said: ") == 0)
+                    why = why.substr(16);
+                set_pl_status_now("Error: " + why);
             }
-            s_pl_busy = false;
-            hook_call("navidrome playlists", nullptr);
         });
-    });
+        s_pl_threads--;
+    }).detach();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1186,7 +1228,7 @@ static void prefs_closed()
 {
     s_playlists.clear();
     s_playlists_loaded = false;
-    fetch_playlists_async();
+    fetch_playlists_async(true);
     hook_call("navidrome source", nullptr);
 }
 
@@ -1203,7 +1245,7 @@ static const MenuItem menu_items[] = {
     {N_("Navidrome: Play Library (by artist)"), play_artist},
     {N_("Navidrome: Play Library (by title)"), play_title},
     {N_("Navidrome: Play Library (scrambled list)"), play_random},
-    {N_("Navidrome: Refresh (keeps playing)"), refresh},
+    {N_("Navidrome: Refresh Library (keeps playing)"), refresh},
 };
 
 static const AudMenuID menus[] = {AudMenuID::Main, AudMenuID::Playlist};
@@ -1231,6 +1273,9 @@ public:
         // Silently skipped if no server is set; loads the library if there's no playlist yet.
         if (aud_get_bool(CFG, "refresh_on_start") && !base_url().empty())
             s_startup.queue(1500, refresh);
+        // have the playlist list ready by the time the window is opened
+        if (!base_url().empty())
+            s_pl_startup.queue(500, []() { fetch_playlists_async(false); });
         return true;
     }
 
@@ -1240,10 +1285,14 @@ public:
             for (auto & item : menu_items)
                 aud_plugin_menu_remove(m, item.func);
         s_startup.stop();
+        s_pl_startup.stop();
         if (s_worker.joinable())
             s_worker.join();
-        if (s_pl_worker.joinable())
-            s_pl_worker.join();
+        // playlist requests give up within ~10s (Audacious's HTTP timeout); don't
+        // hold up quitting longer than a few seconds for one
+        ++s_pl_gen;
+        for (int i = 0; i < 60 && s_pl_threads > 0; i++)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         s_drain.stop();
         s_wait_add.stop();
         s_posted.clear();
@@ -1253,16 +1302,20 @@ public:
         s_playlists_loaded = false;
         s_playlists_failed = false;
         s_status = String();
+        s_pl_status = String();
     }
 
     /* Messages from the Winamp interface (Navidrome edition). Main thread only.
      *   play            data: "folder"/"artist"/"title"/"random", or null for the saved order
      *   refresh         re-sync whatever is loaded (library or playlist)
      *   play-playlist   data: Navidrome playlist id
-     *   fetch-playlists fetch the playlist list; "navidrome playlists" hook fires when done
+     *   fetch-playlists fetch the playlist list if it isn't loaded or on its way
+     *   refresh-playlists  fetch the playlist list again now
+     *                   ("navidrome playlists" fires whenever the list or its status changes)
      *   get-playlists   data: Index<String> * to fill with id, name, track count triples;
- *                   returns 0 when loaded, 1 while still loading, 2 if loading failed
-     *   get-status      data: String * (status line; "" when idle)
+     *                   returns 0 when loaded, 1 while still loading, 2 if loading failed
+     *   get-status      data: String * (library status: progress, or the last result and when)
+     *   get-playlist-status  data: String * (playlists status)
      *   get-info        data: Index<String> * to fill with: order, source, source name, busy, loaded
      *   set-order       data: order name (used by the next "play" with null data) */
     int take_message(const char * code, const void * data, int) override
@@ -1286,7 +1339,17 @@ public:
         }
         if (!strcmp(code, "fetch-playlists"))
         {
-            fetch_playlists_async();
+            fetch_playlists_async(false);
+            return 0;
+        }
+        if (!strcmp(code, "refresh-playlists"))
+        {
+            fetch_playlists_async(true);
+            return 0;
+        }
+        if (!strcmp(code, "get-playlist-status") && data)
+        {
+            *(String *)data = s_pl_status;
             return 0;
         }
         if (!strcmp(code, "set-order") && text)

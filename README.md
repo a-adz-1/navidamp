@@ -15,11 +15,13 @@ equaliser.
   shuffling, Winamp-style. Every track plays once before anything repeats.
 - **Your playlists:** every Navidrome playlist is listed in the window, and one
   click loads and shuffles it.
-- **Refresh without stopping:** new albums are added and deleted tracks are
-  dropped while the music keeps playing.
+- **Refresh without stopping:** **Refresh Library** adds new albums and drops
+  deleted tracks while the music keeps playing; **Refresh Playlists** fetches
+  your playlist list again. Each says what its last run found and when, e.g.
+  `+12 new, -3 removed (09:41)`.
 - **Quick with big libraries:** your library is fetched four pages at a
   time, with a running count and percentage in the Navidrome window
-  (`Loading 20,000 / 46,809 (42%)`).
+  (`20,000 / 46,809 (42%)`).
 - **Pick the list order:** by folder (like importing a local library), by
   artist, by title, or scrambled. Playback is shuffled whichever you pick.
 - **Matches your skin:** the window uses your skin's frame, title lettering,
@@ -98,7 +100,11 @@ artist, album, track number) work on it too.
 
 Without the Navidrome interface, right-click the main window or the playlist
 and look under **Services**. That menu has Play Library in each order and
-Refresh, but not your Navidrome playlists.
+Refresh Library, but not your Navidrome playlists.
+
+navidamp doesn't watch your server for changes: after adding music to
+Navidrome, click **Refresh Library** (or tick **Refresh library when Audacious
+starts** in Server Settings).
 
 ## Custom button art
 
@@ -135,6 +141,7 @@ Save it as either of these:
 | Window says "Turn on Navidrome in Settings > Plugins" | Tick **Navidrome** under Settings → Plugins → General. |
 | "Couldn't reach Navidrome" | Check the address in Server Settings, including `http://` and the port, and that the server is up. |
 | "Wrong username or password" | Re-enter them in Server Settings. Passwords with symbols are fine. |
+| Playlists don't appear | The window shows why under **Playlists**. Fix that, then click **Refresh Playlists**. |
 | A track won't play | Run Audacious from a terminal: each failed attempt is logged with Navidrome's reason. |
 
 ## How it works
