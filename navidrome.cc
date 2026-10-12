@@ -50,7 +50,12 @@
 // before the libaudcore headers, whose translation macros clash with Qt's
 #include <QCheckBox>
 #include <QDesktopServices>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QPushButton>
 #include <QUrl>
 #include <libaudqt/libaudqt.h>
@@ -1145,6 +1150,124 @@ static bool paths_made_up(const std::vector<Song> & songs)
 }
 
 static void open_web(const std::string & page);
+static void tell(const std::string & text, bool ok);
+static void play_folder();
+
+/* Navidrome's own web API (not the Subsonic one), used to find - and switch
+ * on Report Real Path for - the "player" Navidrome keeps for navidamp. */
+using PlayersDone = std::function<void(QNetworkAccessManager * net, const QByteArray & token,
+                                       const QJsonArray & players, const std::string & err)>;
+
+static std::string reply_error(QNetworkReply * r, const char * what)
+{
+    int code = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (code == 401 || code == 403)
+        return std::string("Navidrome refused ") + what + " (wrong username or password?)";
+    if (code)
+        return std::string("Navidrome answered ") + what + " with error " + std::to_string(code);
+    return std::string("couldn't reach Navidrome for ") + what + ": " + r->errorString().toStdString();
+}
+
+static QNetworkRequest nd_request(const std::string & path, const QByteArray & token = {})
+{
+    QNetworkRequest req(QUrl(QString::fromStdString(base_url() + path)));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    req.setTransferTimeout(15000);
+    if (!token.isEmpty())
+        req.setRawHeader("X-ND-Authorization", "Bearer " + token);
+    return req;
+}
+
+/* Main thread. Logs in and fetches this user's navidamp players. */
+static void navidamp_players(PlayersDone done)
+{
+    auto net = new QNetworkAccessManager; // deleted by whoever finishes with it
+    QJsonObject creds{{"username", QString::fromStdString(cfg("user"))},
+                      {"password", QString::fromStdString(cfg("password"))}};
+    QNetworkReply * login = net->post(nd_request("/auth/login"), QJsonDocument(creds).toJson());
+    QObject::connect(login, &QNetworkReply::finished, [net, login, done]() {
+        login->deleteLater();
+        QByteArray token = QJsonDocument::fromJson(login->readAll()).object()["token"].toString().toUtf8();
+        if (login->error() != QNetworkReply::NoError || token.isEmpty())
+            return done(net, {}, {}, reply_error(login, "the login"));
+
+        QNetworkReply * list = net->get(nd_request("/api/player", token));
+        QObject::connect(list, &QNetworkReply::finished, [net, list, token, done]() {
+            list->deleteLater();
+            if (list->error() != QNetworkReply::NoError)
+                return done(net, token, {}, reply_error(list, "the player list"));
+            QJsonArray mine;
+            for (auto v : QJsonDocument::fromJson(list->readAll()).array())
+                if (v.toObject()["client"].toString() == "audacious-navidrome")
+                    mine.append(v);
+            if (mine.isEmpty())
+                return done(net, token, {}, "Navidrome hasn't listed navidamp as a player yet");
+            done(net, token, mine, "");
+        });
+    });
+}
+
+static void open_players_page()
+{
+    navidamp_players([](QNetworkAccessManager * net, const QByteArray &, const QJsonArray & players,
+                        const std::string & err) {
+        net->deleteLater();
+        if (!err.empty())
+            AUDWARN("navidrome: %s; opening the player list instead\n", err.c_str());
+        // the newest player, if there's more than one (Navidrome keeps one per app version)
+        QJsonObject best;
+        for (auto v : players)
+            if (best.isEmpty() || v.toObject()["lastSeen"].toString() > best["lastSeen"].toString())
+                best = v.toObject();
+        open_web(best.isEmpty() ? "#/player" : "#/player/" + best["id"].toString().toStdString());
+    });
+}
+
+static void turn_on_real_paths()
+{
+    navidamp_players([](QNetworkAccessManager * net, const QByteArray & token, const QJsonArray & players,
+                        const std::string & err) {
+        if (!err.empty())
+        {
+            net->deleteLater();
+            return tell("Couldn't turn on Report Real Path: " + err +
+                        ". You can still turn it on yourself in Navidrome, under your profile menu > Players.", false);
+        }
+        auto left = std::make_shared<int>(0);
+        auto failed = std::make_shared<std::string>();
+        auto finish = [net, left, failed]() {
+            if (--*left > 0)
+                return;
+            net->deleteLater();
+            if (!failed->empty())
+                tell("Couldn't turn on Report Real Path: " + *failed +
+                     ". You can still turn it on yourself in Navidrome, under your profile menu > Players.", false);
+            else if (QMessageBox::question(nullptr, _("Navidrome"),
+                         _("Report Real Path is on. Navidrome will now tell navidamp where your files "
+                           "really are.\n\nReload the library now, sorted by your real folders? "
+                           "(This starts a new shuffle.)")) == QMessageBox::Yes)
+                play_folder();
+        };
+        *left = 1; // held until every request is sent
+        for (auto v : players)
+        {
+            QJsonObject p = v.toObject();
+            if (p["reportRealPath"].toBool())
+                continue;
+            p["reportRealPath"] = true;
+            ++*left;
+            QNetworkReply * put = net->put(nd_request("/api/player/" + p["id"].toString().toStdString(), token),
+                                           QJsonDocument(p).toJson());
+            QObject::connect(put, &QNetworkReply::finished, [put, failed, finish]() {
+                put->deleteLater();
+                if (put->error() != QNetworkReply::NoError)
+                    *failed = reply_error(put, "the change");
+                finish();
+            });
+        }
+        finish();
+    });
+}
 
 /* Main thread. Explains, once per session until "Don't show this again" is
  * ticked, how to make "by folder" follow the real folders. */
@@ -1164,14 +1287,14 @@ static void maybe_explain_paths()
         "Instead it reports a made-up folder for each track, built from its album artist "
         "and album, so \"by folder\" ends up grouped by artist. Compilations without an "
         "album artist tag get split up among their artists.\n\n"
-        "To use your real folders:\n"
-        "1. In Navidrome, open your profile menu (top right) and choose Players.\n"
-        "2. Open the player called audacious-navidrome.\n"
-        "3. Turn on Report Real Path and save.\n"
-        "4. Click Shuffle All Songs again."));
+        "Navidrome's Report Real Path setting fixes this. navidamp can turn it on for you, "
+        "or you can open its settings page in Navidrome and do it yourself."));
     box->setCheckBox(new QCheckBox(_("Don't show this again")));
-    QPushButton * open = box->addButton(_("Open Players Page"), QMessageBox::ActionRole);
-    QObject::connect(open, &QPushButton::clicked, []() { open_web("#/player"); });
+    QPushButton * fix = box->addButton(_("Turn It On for Me"), QMessageBox::AcceptRole);
+    QPushButton * open = box->addButton(_("Open Settings Page"), QMessageBox::ActionRole);
+    box->setDefaultButton(fix);
+    QObject::connect(fix, &QPushButton::clicked, turn_on_real_paths);
+    QObject::connect(open, &QPushButton::clicked, open_players_page);
     QObject::connect(box, &QMessageBox::finished, [box]() {
         if (box->checkBox()->isChecked())
             aud_set_bool(CFG, "path_tip_off", true);

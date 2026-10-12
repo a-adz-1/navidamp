@@ -10,12 +10,12 @@ PLUGIN_DIR := $(shell pkg-config --variable=plugin_dir audacious)
 DEPS_CFLAGS := $(shell pkg-config --cflags audacious glib-2.0)
 DEPS_LIBS   := $(shell pkg-config --libs audacious glib-2.0)
 # Qt 6, for the general plugin's popups: from pkg-config, or ask qmake6
-QT_CFLAGS := $(shell pkg-config --cflags Qt6Core Qt6Gui Qt6Widgets 2>/dev/null)
-QT_LIBS   := $(shell pkg-config --libs Qt6Core Qt6Gui Qt6Widgets 2>/dev/null)
+QT_CFLAGS := $(shell pkg-config --cflags Qt6Core Qt6Gui Qt6Widgets Qt6Network 2>/dev/null)
+QT_LIBS   := $(shell pkg-config --libs Qt6Core Qt6Gui Qt6Widgets Qt6Network 2>/dev/null)
 ifeq ($(strip $(QT_CFLAGS)),)
 QT_INC    := $(shell qmake6 -query QT_INSTALL_HEADERS 2>/dev/null)
-QT_CFLAGS := -I$(QT_INC) -I$(QT_INC)/QtCore -I$(QT_INC)/QtGui -I$(QT_INC)/QtWidgets
-QT_LIBS   := -lQt6Widgets -lQt6Gui -lQt6Core
+QT_CFLAGS := -I$(QT_INC) -I$(QT_INC)/QtCore -I$(QT_INC)/QtGui -I$(QT_INC)/QtWidgets -I$(QT_INC)/QtNetwork
+QT_LIBS   := -lQt6Network -lQt6Widgets -lQt6Gui -lQt6Core
 endif
 FLAGS = -std=c++17 -fPIC -shared -fvisibility=hidden -Wall \
         -DPACKAGE='"audacious-navidrome"' -DEXPORT='__attribute__((visibility("default")))'
