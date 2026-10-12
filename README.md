@@ -22,18 +22,18 @@ equaliser.
 - **Quick with big libraries:** your library is fetched four pages at a
   time, with a running count and percentage in the Navidrome window
   (`20,000 / 46,809 (42%)`).
-- **Look a track up in Navidrome:** right-click a track and choose **Open
-  Containing Folder** to open its album in Navidrome's web interface (or its
-  artist, if it has no real album). Nothing is played.
+- **Look a track up in Navidrome:** right-click a track and choose **Open in
+  Navidrome** to open its album in Navidrome's web interface (or its artist,
+  if it has no real album). Nothing is played.
 - **Pick the list order:** by folder (like importing a local library), by
   artist, by title, or scrambled. Playback is shuffled whichever you pick.
 - **Matches your skin:** the window uses your skin's frame, title lettering,
   playlist colours and font. The button is built from your skin's own buttons.
 - **Reliable streaming:** tracks play with the right decoder straight away,
   short network hiccups are retried, and formats Audacious can't play out of
-  the box are converted to MP3 by Navidrome as they play. So are MP3s whose
-  tags trip up Audacious's MP3 decoder (unsynchronised or very large ID3
-  tags, usually from embedded cover art).
+  the box are converted to MP3 by Navidrome as they play. So are MP3s that
+  trip up Audacious's MP3 decoder (odd or oversized ID3 tags, junk before the
+  audio, or files that aren't really MP3s).
 - **Plays nicely:** the normal Winamp interface stays installed, and you can
   switch between them at any time.
 
@@ -100,8 +100,8 @@ make it taller, and scroll the playlists with the mouse wheel.
 ![What each row of the Navidrome window does](docs/images/navidrome-window.png)
 
 Everything plays from a playlist called **Navidrome**. It's reused each time
-and leaves your other playlists alone. Right-click a track and choose **Open
-Containing Folder** to see it in Navidrome's web interface: its album, or its
+and leaves your other playlists alone. Right-click a track and choose **Open in
+Navidrome** to see it in Navidrome's web interface: its album, or its
 artist's page for tracks Navidrome files under "[Unknown Album]". (It's also
 under Services → **Navidrome: Open Track in Navidrome**, which works in any
 interface.) Audacious's own sort options (title,

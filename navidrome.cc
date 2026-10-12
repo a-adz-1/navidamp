@@ -199,38 +199,105 @@ private:
  * old, rarely supported format) or a very large tag (usually embedded cover
  * art) stops the decoder finding the audio. Peek at the start of the file and
  * say if Navidrome should convert it instead. Leaves the file rewound. */
+// Length in bytes of the MPEG audio frame whose header starts at h, or 0 if
+// it isn't a valid header (free-format frames count as invalid too).
+static int mpeg_frame_length(const unsigned char * h)
+{
+    static const short rates[5][16] = {
+        {0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, -1}, // MPEG-1 layer I
+        {0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, -1},    // MPEG-1 layer II
+        {0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, -1},     // MPEG-1 layer III
+        {0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, -1},    // MPEG-2/2.5 layer I
+        {0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, -1}};        // MPEG-2/2.5 layer II/III
+    static const int freqs[3] = {44100, 48000, 32000};
+
+    if (h[0] != 0xFF || (h[1] & 0xE0) != 0xE0)
+        return 0;
+    int version = (h[1] >> 3) & 3;  // 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5
+    int layer = 4 - ((h[1] >> 1) & 3);
+    int rate_i = h[2] >> 4, freq_i = (h[2] >> 2) & 3, pad = (h[2] >> 1) & 1;
+    if (version == 1 || layer == 4 || freq_i == 3)
+        return 0;
+
+    int table = version == 3 ? layer - 1 : (layer == 1 ? 3 : 4);
+    int kbps = rates[table][rate_i];
+    if (kbps <= 0)
+        return 0;
+    int freq = freqs[freq_i] >> (version == 3 ? 0 : version == 2 ? 1 : 2);
+
+    if (layer == 1)
+        return (12000 * kbps / freq + pad) * 4;
+    if (layer == 3 && version != 3)
+        return 72000 * kbps / freq + pad;
+    return 144000 * kbps / freq + pad;
+}
+
+// Some MP3s play fine elsewhere but fail in Audacious's MP3 decoder: odd ID3
+// tags, junk before the audio, or something that isn't really an MP3. Look at
+// the start of the stream (it's still in the probe buffer, so rewinding is
+// cheap) and say whether to have Navidrome convert it instead.
 static bool mp3_needs_converting(VFSFile & file, std::string & why)
 {
-    unsigned char h[10];
-    bool got = file.fread(h, 1, sizeof h) == (int64_t)sizeof h;
+    const int64_t want = 256 * 1024 - 1024; // stay inside the probe buffer
+    std::vector<unsigned char> buf(want);
+    int64_t got = 0, n;
+    while (got < want && (n = file.fread(buf.data() + got, 1, want - got)) > 0)
+        got += n;
     if (file.fseek(0, VFS_SEEK_SET) != 0)
     {
         why = "couldn't rewind the stream";
         return true;
     }
-    if (!got)
-        return false;
+    if (got < 4096)
+        return false; // too short to judge; let Audacious try
 
-    if (h[0] == 'I' && h[1] == 'D' && h[2] == '3')
+    int64_t pos = 0;
+    for (int tags = 0; got - pos >= 10 && !memcmp(&buf[pos], "ID3", 3); tags++)
     {
-        int size = (h[6] << 21) | (h[7] << 14) | (h[8] << 7) | h[9];
+        const unsigned char * h = &buf[pos];
+        if ((h[6] | h[7] | h[8] | h[9]) & 0x80)
+        {
+            why = "damaged ID3 tag";
+            return true;
+        }
         if (h[5] & 0x80)
         {
             why = "unsynchronised ID3 tag";
             return true;
         }
+        int64_t size = (h[6] << 21) | (h[7] << 14) | (h[8] << 7) | h[9];
         if (size > 128 * 1024)
         {
             why = "large ID3 tag (" + std::to_string(size / 1024) + " KB, usually cover art)";
             return true;
         }
-        return false;
+        if (tags == 1)
+        {
+            why = "more than one ID3 tag";
+            return true;
+        }
+        pos += 10 + size + ((h[5] & 0x10) ? 10 : 0);
     }
-    if (h[0] == 0xFF && (h[1] & 0xE0) == 0xE0) // a plain MPEG audio frame
-        return false;
 
-    why = "doesn't start like an MP3";
-    return true;
+    while (pos < got && buf[pos] == 0) // padding after the tag
+        pos++;
+
+    // The audio must start right here, with three frames in a row.
+    for (int frame = 0; frame < 3; frame++)
+    {
+        if (got - pos < 4)
+            return false; // ran out of data looking; let Audacious try
+        int len = mpeg_frame_length(&buf[pos]);
+        if (!len)
+        {
+            why = frame ? "broken MPEG frames at the start"
+                  : pos ? "unexpected data after the ID3 tag"
+                        : "doesn't start like an MP3";
+            return true;
+        }
+        pos += len;
+    }
+    return false;
 }
 
 VFSImpl * NavidromeTransport::fopen(const char * filename, const char * mode, String & error)
