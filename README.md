@@ -151,6 +151,7 @@ Save it as either of these:
 | "Couldn't reach Navidrome" | Check the address in Server Settings, including `http://` and the port, and that the server is up. |
 | "Wrong username or password" | Re-enter them in Server Settings. Passwords with symbols are fine. |
 | Playlists don't appear | The window shows why under **Playlists**. Fix that, then click **Refresh Playlists**. |
+| "By folder" groups tracks by artist, not by your real folders | Navidrome reports made-up `Artist/Album` paths by default. In Navidrome, open your profile menu → **Players**, pick **audacious-navidrome**, turn on **Report Real Path**, then click **Shuffle All Songs** again. |
 | A track won't play | Run Audacious from a terminal: each failed attempt is logged with Navidrome's reason. |
 
 ## How it works
