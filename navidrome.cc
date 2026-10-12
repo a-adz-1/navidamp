@@ -48,8 +48,10 @@
 
 #ifndef NAVIDROME_TRANSPORT
 // before the libaudcore headers, whose translation macros clash with Qt's
+#include <QCheckBox>
 #include <QDesktopServices>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QUrl>
 #include <libaudqt/libaudqt.h>
 #endif
@@ -1125,6 +1127,58 @@ static void apply_load(const std::vector<Song> & songs, const std::string & labe
     finish_load(p);
 }
 
+/* Navidrome normally reports a made-up "Album Artist/Album/NN - Title.ext"
+ * path; with the player's "Report Real Path" on, it reports the file's
+ * absolute path instead. */
+static bool paths_made_up(const std::vector<Song> & songs)
+{
+    size_t made_up = 0;
+    for (auto & s : songs)
+    {
+        const std::string & p = s.path;
+        bool real = !p.empty() && (p[0] == '/' || p[0] == '\\' ||
+                                   (p.size() > 2 && p[1] == ':' && (p[2] == '\\' || p[2] == '/')));
+        if (!real)
+            made_up++;
+    }
+    return made_up * 2 > songs.size();
+}
+
+static void open_web(const std::string & page);
+
+/* Main thread. Explains, once per session until "Don't show this again" is
+ * ticked, how to make "by folder" follow the real folders. */
+static void maybe_explain_paths()
+{
+    static bool shown = false;
+    if (shown || aud_get_bool(CFG, "path_tip_off") ||
+        aud_get_mainloop_type() != MainloopType::Qt)
+        return;
+    shown = true;
+
+    auto box = new QMessageBox(QMessageBox::Information, _("Navidrome"),
+        _("Sorting by folder is using made-up folders"), QMessageBox::Close);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setInformativeText(_(
+        "Navidrome doesn't tell apps where your files really are unless you ask it to. "
+        "Instead it reports a made-up folder for each track, built from its album artist "
+        "and album, so \"by folder\" ends up grouped by artist. Compilations without an "
+        "album artist tag get split up among their artists.\n\n"
+        "To use your real folders:\n"
+        "1. In Navidrome, open your profile menu (top right) and choose Players.\n"
+        "2. Open the player called audacious-navidrome.\n"
+        "3. Turn on Report Real Path and save.\n"
+        "4. Click Shuffle All Songs again."));
+    box->setCheckBox(new QCheckBox(_("Don't show this again")));
+    QPushButton * open = box->addButton(_("Open Players Page"), QMessageBox::ActionRole);
+    QObject::connect(open, &QPushButton::clicked, []() { open_web("#/player"); });
+    QObject::connect(box, &QMessageBox::finished, [box]() {
+        if (box->checkBox()->isChecked())
+            aud_set_bool(CFG, "path_tip_off", true);
+    });
+    box->show(); // not modal: the music starts behind it
+}
+
 static void load_job(Order order)
 {
     std::vector<Song> songs;
@@ -1134,9 +1188,14 @@ static void load_job(Order order)
     if (songs.empty())
         return fail("the library is empty");
     sort_songs(songs, order);
+    bool explain = order == Order::Folder && paths_made_up(songs);
 
     auto shared = std::make_shared<std::vector<Song>>(std::move(songs));
-    post_main([shared]() { apply_load(*shared, "", ""); });
+    post_main([shared, explain]() {
+        apply_load(*shared, "", "");
+        if (explain)
+            maybe_explain_paths();
+    });
 }
 
 static void playlist_job(std::string id)
