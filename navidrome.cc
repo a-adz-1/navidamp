@@ -195,6 +195,44 @@ private:
     VFSFile m_file;
 };
 
+/* Some MP3s stream fine but won't decode: an "unsynchronised" ID3 tag (an
+ * old, rarely supported format) or a very large tag (usually embedded cover
+ * art) stops the decoder finding the audio. Peek at the start of the file and
+ * say if Navidrome should convert it instead. Leaves the file rewound. */
+static bool mp3_needs_converting(VFSFile & file, std::string & why)
+{
+    unsigned char h[10];
+    bool got = file.fread(h, 1, sizeof h) == (int64_t)sizeof h;
+    if (file.fseek(0, VFS_SEEK_SET) != 0)
+    {
+        why = "couldn't rewind the stream";
+        return true;
+    }
+    if (!got)
+        return false;
+
+    if (h[0] == 'I' && h[1] == 'D' && h[2] == '3')
+    {
+        int size = (h[6] << 21) | (h[7] << 14) | (h[8] << 7) | h[9];
+        if (h[5] & 0x80)
+        {
+            why = "unsynchronised ID3 tag";
+            return true;
+        }
+        if (size > 128 * 1024)
+        {
+            why = "large ID3 tag (" + std::to_string(size / 1024) + " KB, usually cover art)";
+            return true;
+        }
+        return false;
+    }
+    if (h[0] == 0xFF && (h[1] & 0xE0) == 0xE0) // a plain MPEG audio frame
+        return false;
+
+    why = "doesn't start like an MP3";
+    return true;
+}
+
 VFSImpl * NavidromeTransport::fopen(const char * filename, const char * mode, String & error)
 {
     if (strchr(mode, 'w') || strchr(mode, 'a') || strchr(mode, '+'))
@@ -213,15 +251,19 @@ VFSImpl * NavidromeTransport::fopen(const char * filename, const char * mode, St
         return nullptr;
     }
     std::string kind(path, slash - path);
-    std::string id(slash + 1);
+    std::string id(slash + 1), ext;
     size_t dot = id.rfind('.');
     if (dot != std::string::npos)
+    {
+        ext = id.substr(dot + 1);
         id.resize(dot);
+    }
 
     std::string params = "id=" + url_encode(id) +
                          (kind == "raw" ? "&format=raw" : "&format=mp3&maxBitRate=320");
 
     std::string last;
+    bool converted = false;
     for (int attempt = 1; attempt <= 3; attempt++)
     {
         VFSFile file(api_url("stream", params).c_str(), "r");
@@ -229,7 +271,21 @@ VFSImpl * NavidromeTransport::fopen(const char * filename, const char * mode, St
         {
             String ctype = file.get_metadata("content-type");
             if (!ctype || (!strstr(ctype, "json") && !strstr(ctype, "xml")))
+            {
+                // The converted stream is an MP3 too, so this only helps .mp3 files
+                // (Audacious picks the decoder from the extension).
+                std::string why;
+                if (kind == "raw" && ext == "mp3" && !converted && mp3_needs_converting(file, why))
+                {
+                    AUDINFO("navidrome: track %s: %s - asking Navidrome to convert it\n",
+                            id.c_str(), why.c_str());
+                    params = "id=" + url_encode(id) + "&format=mp3&maxBitRate=320";
+                    converted = true;
+                    attempt = 0; // a fresh set of attempts for the converted stream
+                    continue;
+                }
                 return new NavidromeFile(std::move(file));
+            }
 
             // Subsonic errors come back as a JSON/XML body instead of audio;
             // pull out just the message, e.g. "Data not found".

@@ -31,7 +31,9 @@ equaliser.
   playlist colours and font. The button is built from your skin's own buttons.
 - **Reliable streaming:** tracks play with the right decoder straight away,
   short network hiccups are retried, and formats Audacious can't play out of
-  the box are converted to MP3 by Navidrome as they play.
+  the box are converted to MP3 by Navidrome as they play. So are MP3s whose
+  tags trip up Audacious's MP3 decoder (unsynchronised or very large ID3
+  tags, usually from embedded cover art).
 - **Plays nicely:** the normal Winamp interface stays installed, and you can
   switch between them at any time.
 
