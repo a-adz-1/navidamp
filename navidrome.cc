@@ -514,7 +514,7 @@ private:
 
 struct Song
 {
-    std::string id, title, artist, album, path, suffix, album_id;
+    std::string id, title, artist, album, path, suffix, album_id, artist_id;
     int track = 0, disc = 0, duration = 0;
 };
 
@@ -562,6 +562,7 @@ static void add_songs(const JVal & list, std::vector<Song> & songs)
         song.disc = s.num("discNumber");
         song.duration = s.num("duration");
         song.album_id = s.str("albumId");
+        song.artist_id = s.str("artistId");
         songs.push_back(std::move(song));
     }
 }
@@ -802,13 +803,28 @@ static std::string uri_id(const char * uri)
     return id;
 }
 
-// song id -> Navidrome album id, for "open in Navidrome" (main thread only)
-static std::unordered_map<std::string, std::string> s_album_of;
+/* Where a track's page is in Navidrome's web interface: its album, or for
+ * tracks with no real album ("[Unknown Album]" is Navidrome's catch-all),
+ * its artist. "" = just open Navidrome. */
+static std::string web_page(const std::string & album_id, const std::string & album,
+                            const std::string & artist_id)
+{
+    bool real_album = !album_id.empty() && !album.empty() && album != "[Unknown Album]";
+    if (real_album)
+        return "#/album/" + album_id + "/show";
+    if (!artist_id.empty())
+        return "#/artist/" + artist_id + "/show";
+    if (!album_id.empty())
+        return "#/album/" + album_id + "/show";
+    return "";
+}
+
+// song id -> its page in Navidrome, for "open in Navidrome" (main thread only)
+static std::unordered_map<std::string, std::string> s_page_of;
 
 static PlaylistAddItem make_item(const Song & s)
 {
-    if (!s.album_id.empty())
-        s_album_of[s.id] = s.album_id;
+    s_page_of[s.id] = web_page(s.album_id, s.album, s.artist_id);
     std::string uri = track_uri(s);
     Tuple t;
     t.set_filename(uri.c_str());
@@ -1197,10 +1213,10 @@ static void fetch_playlists_async(bool force = true)
 /* Open a track's album in Navidrome's web interface                     */
 /* ------------------------------------------------------------------ */
 
-static void open_web(const std::string & album_id)
+static void open_web(const std::string & page)
 {
-    // Navidrome's web interface: <server>/app/#/album/<id>/show
-    std::string url = base_url() + "/app/" + (album_id.empty() ? "" : "#/album/" + album_id + "/show");
+    // Navidrome's web interface, e.g. <server>/app/#/album/<id>/show
+    std::string url = base_url() + "/app/" + page;
     if (aud_get_mainloop_type() != MainloopType::Qt ||
         !QDesktopServices::openUrl(QUrl(QString::fromStdString(url))))
         aud_ui_show_error(("Navidrome: couldn't open a web browser for " + url).c_str());
@@ -1218,8 +1234,8 @@ static bool open_in_navidrome(const char * uri)
         return true;
     }
 
-    auto known = s_album_of.find(id);
-    if (known != s_album_of.end())
+    auto known = s_page_of.find(id);
+    if (known != s_page_of.end())
     {
         open_web(known->second);
         return true;
@@ -1229,18 +1245,20 @@ static bool open_in_navidrome(const char * uri)
     std::thread([id]() {
         JVal doc;
         const JVal * resp = nullptr;
-        std::string err, album_id;
-        if (api_call("getSong", "id=" + url_encode(id), doc, resp, err))
+        std::string err, page;
+        bool ok = api_call("getSong", "id=" + url_encode(id), doc, resp, err);
+        if (ok)
         {
             const JVal * song = resp->get("song");
-            album_id = song ? song->str("albumId") : std::string();
+            if (song)
+                page = web_page(song->str("albumId"), song->str("album"), song->str("artistId"));
         }
         else
             AUDWARN("navidrome: couldn't look up song %s: %s\n", id.c_str(), err.c_str());
-        post_main([id, album_id]() {
-            if (!album_id.empty())
-                s_album_of[id] = album_id;
-            open_web(album_id); // the album, or Navidrome's home page if it couldn't be found
+        post_main([id, page, ok]() {
+            if (ok)
+                s_page_of[id] = page;
+            open_web(page); // Navidrome's home page if the track couldn't be found
         });
     }).detach();
     return true;
@@ -1320,7 +1338,7 @@ static const MenuItem menu_items[] = {
 };
 
 static const AudMenuID menus[] = {AudMenuID::Main, AudMenuID::Playlist};
-static const char * const OPEN_ITEM = N_("Navidrome: Open Track's Album in Navidrome");
+static const char * const OPEN_ITEM = N_("Navidrome: Open Track in Navidrome");
 
 class NavidromePlugin : public GeneralPlugin
 {
@@ -1358,7 +1376,7 @@ public:
             for (auto & item : menu_items)
                 aud_plugin_menu_remove(m, item.func);
         aud_plugin_menu_remove(AudMenuID::Playlist, open_focused_in_navidrome);
-        s_album_of.clear();
+        s_page_of.clear();
         s_startup.stop();
         s_pl_startup.stop();
         if (s_worker.joinable())

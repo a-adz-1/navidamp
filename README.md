@@ -22,6 +22,9 @@ equaliser.
 - **Quick with big libraries:** your library is fetched four pages at a
   time, with a running count and percentage in the Navidrome window
   (`20,000 / 46,809 (42%)`).
+- **Look a track up in Navidrome:** right-click a track and choose **Open
+  Containing Folder** to open its album in Navidrome's web interface (or its
+  artist, if it has no real album). Nothing is played.
 - **Pick the list order:** by folder (like importing a local library), by
   artist, by title, or scrambled. Playback is shuffled whichever you pick.
 - **Matches your skin:** the window uses your skin's frame, title lettering,
@@ -95,7 +98,11 @@ make it taller, and scroll the playlists with the mouse wheel.
 ![What each row of the Navidrome window does](docs/images/navidrome-window.png)
 
 Everything plays from a playlist called **Navidrome**. It's reused each time
-and leaves your other playlists alone. Audacious's own sort options (title,
+and leaves your other playlists alone. Right-click a track and choose **Open
+Containing Folder** to see it in Navidrome's web interface: its album, or its
+artist's page for tracks Navidrome files under "[Unknown Album]". (It's also
+under Services → **Navidrome: Open Track in Navidrome**, which works in any
+interface.) Audacious's own sort options (title,
 artist, album, track number) work on it too.
 
 Without the Navidrome interface, right-click the main window or the playlist
