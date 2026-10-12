@@ -152,7 +152,7 @@ Save it as either of these:
 | "Wrong username or password" | Re-enter them in Server Settings. Passwords with symbols are fine. |
 | Playlists don't appear | The window shows why under **Playlists**. Fix that, then click **Refresh Playlists**. |
 | "By folder" groups tracks by artist, not by your real folders | Navidrome reports made-up `Artist/Album` paths unless its **Report Real Path** setting is on. The first time navidamp spots this it offers to turn it on for you, or to open the setting in Navidrome. To do it by hand: in Navidrome, open your profile menu → **Players**, pick **audacious-navidrome**, turn on **Report Real Path**, then click **Shuffle All Songs** again. |
-| A track won't play | Run Audacious from a terminal: each failed attempt is logged with Navidrome's reason. |
+| A track won't play | The popup names the track and says why, with an **Open in Navidrome** button to find it. "Damaged" means the file on the server is partly empty (usually an unfinished download): get it again. For anything else, run Audacious from a terminal: each failed attempt is logged with Navidrome's reason. |
 
 ## How it works
 

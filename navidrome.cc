@@ -202,10 +202,6 @@ private:
     VFSFile m_file;
 };
 
-/* Some MP3s stream fine but won't decode: an "unsynchronised" ID3 tag (an
- * old, rarely supported format) or a very large tag (usually embedded cover
- * art) stops the decoder finding the audio. Peek at the start of the file and
- * say if Navidrome should convert it instead. Leaves the file rewound. */
 // Length in bytes of the MPEG audio frame whose header starts at h, or 0 if
 // it isn't a valid header (free-format frames count as invalid too).
 static int mpeg_frame_length(const unsigned char * h)
@@ -239,11 +235,17 @@ static int mpeg_frame_length(const unsigned char * h)
     return 144000 * kbps / freq + pad;
 }
 
-// Some MP3s play fine elsewhere but fail in Audacious's MP3 decoder: odd ID3
-// tags, junk before the audio, or something that isn't really an MP3. Look at
-// the start of the stream (it's still in the probe buffer, so rewinding is
-// cheap) and say whether to have Navidrome convert it instead.
-static bool mp3_needs_converting(VFSFile & file, std::string & why)
+enum class Verdict { Fine, Convert, Damaged };
+
+// Looks at the start of a raw stream (it's still in the probe buffer, so
+// rewinding is cheap) and leaves it rewound.
+//  - Damaged: a long run of zero bytes where the audio should start. That's
+//    an unfinished download or copy: the file was reserved at full size but
+//    never filled in. Nothing can play it.
+//  - Convert: an MP3 that would trip up Audacious's MP3 decoder (odd ID3
+//    tags, junk before the audio, or not really an MP3); Navidrome's own
+//    converter copes with these.
+static Verdict check_stream(VFSFile & file, const std::string & ext, std::string & why)
 {
     const int64_t want = 256 * 1024 - 1024; // stay inside the probe buffer
     std::vector<unsigned char> buf(want);
@@ -253,58 +255,69 @@ static bool mp3_needs_converting(VFSFile & file, std::string & why)
     if (file.fseek(0, VFS_SEEK_SET) != 0)
     {
         why = "couldn't rewind the stream";
-        return true;
+        return ext == "mp3" ? Verdict::Convert : Verdict::Fine;
     }
     if (got < 4096)
-        return false; // too short to judge; let Audacious try
+        return Verdict::Fine; // too short to judge; let Audacious try
 
+    // skip any ID3 tags (they turn up on other formats too)
     int64_t pos = 0;
-    for (int tags = 0; got - pos >= 10 && !memcmp(&buf[pos], "ID3", 3); tags++)
+    int tags = 0;
+    bool odd_tag = false;
+    for (; got - pos >= 10 && !memcmp(&buf[pos], "ID3", 3); tags++)
     {
         const unsigned char * h = &buf[pos];
         if ((h[6] | h[7] | h[8] | h[9]) & 0x80)
         {
             why = "damaged ID3 tag";
-            return true;
-        }
-        if (h[5] & 0x80)
-        {
-            why = "unsynchronised ID3 tag";
-            return true;
+            odd_tag = true;
+            break;
         }
         int64_t size = (h[6] << 21) | (h[7] << 14) | (h[8] << 7) | h[9];
-        if (size > 128 * 1024)
-        {
-            why = "large ID3 tag (" + std::to_string(size / 1024) + " KB, usually cover art)";
-            return true;
-        }
-        if (tags == 1)
-        {
-            why = "more than one ID3 tag";
-            return true;
-        }
+        if (h[5] & 0x80)
+            why = "unsynchronised ID3 tag", odd_tag = true;
+        else if (size > 128 * 1024)
+            why = "large ID3 tag (" + std::to_string(size / 1024) + " KB, usually cover art)", odd_tag = true;
+        else if (tags == 1)
+            why = "more than one ID3 tag", odd_tag = true;
         pos += 10 + size + ((h[5] & 0x10) ? 10 : 0);
+        if (pos >= got)
+            break;
     }
 
-    while (pos < got && buf[pos] == 0) // padding after the tag
-        pos++;
+    int64_t zeros = pos;
+    while (zeros < got && buf[zeros] == 0)
+        zeros++;
+    if (zeros - pos >= 32 * 1024)
+    {
+        why = zeros >= got ? "at least the first " + std::to_string(got / 1024) + " KB"
+                           : "the first " + std::to_string(zeros / 1024) + " KB";
+        return Verdict::Damaged;
+    }
 
-    // The audio must start right here, with three frames in a row.
+    if (ext != "mp3")
+        return Verdict::Fine;
+    if (odd_tag)
+        return Verdict::Convert;
+
+    // The audio must start right here (after a little padding at most),
+    // with three frames in a row.
+    pos = zeros;
     for (int frame = 0; frame < 3; frame++)
     {
         if (got - pos < 4)
-            return false; // ran out of data looking; let Audacious try
+            return Verdict::Fine; // ran out of data looking; let Audacious try
         int len = mpeg_frame_length(&buf[pos]);
         if (!len)
         {
             why = frame ? "broken MPEG frames at the start"
-                  : pos ? "unexpected data after the ID3 tag"
-                        : "doesn't start like an MP3";
-            return true;
+                  : tags ? "unexpected data after the ID3 tag"
+                         : "doesn't start like an MP3";
+            return Verdict::Convert;
         }
         pos += len;
     }
-    return false;
+    return Verdict::Fine;
 }
 
 VFSImpl * NavidromeTransport::fopen(const char * filename, const char * mode, String & error)
@@ -346,10 +359,24 @@ VFSImpl * NavidromeTransport::fopen(const char * filename, const char * mode, St
             String ctype = file.get_metadata("content-type");
             if (!ctype || (!strstr(ctype, "json") && !strstr(ctype, "xml")))
             {
+                std::string why;
+                Verdict verdict = (kind == "raw" && !converted) ? check_stream(file, ext, why)
+                                                                : Verdict::Fine;
+                if (verdict == Verdict::Damaged)
+                {
+                    // shown in the error popup (the Navidrome interface adds the track
+                    // name and an Open in Navidrome button)
+                    AUDWARN("navidrome: track %s is damaged: %s of the file is empty\n",
+                            id.c_str(), why.c_str());
+                    error = String(("The file on your Navidrome server is damaged: " + why +
+                                    " of it is empty, where the audio should be. It's probably "
+                                    "an unfinished download or copy. Getting the file again "
+                                    "should fix it.").c_str());
+                    return nullptr;
+                }
                 // The converted stream is an MP3 too, so this only helps .mp3 files
                 // (Audacious picks the decoder from the extension).
-                std::string why;
-                if (kind == "raw" && ext == "mp3" && !converted && mp3_needs_converting(file, why))
+                if (verdict == Verdict::Convert && ext == "mp3")
                 {
                     AUDINFO("navidrome: track %s: %s - asking Navidrome to convert it\n",
                             id.c_str(), why.c_str());

@@ -35,7 +35,7 @@ all: skins-navidrome.so
 
 build/%.o: $(SRC)/%.cc $(CONFIG_H)
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) $(FLAGS) $(DEPS_CFLAGS) -I$(SRC) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(FLAGS) $(DEPS_CFLAGS) -I$(SRC) -MMD -MP -c $< -o $@
 
 skins-navidrome.so: $(OBJECTS)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(LDFLAGS) $(DEPS_LIBS)
@@ -48,5 +48,8 @@ uninstall:
 
 clean:
 	rm -rf build skins-navidrome.so
+
+# rebuild a file when anything it includes changes (several include ../ui-common)
+-include $(OBJECTS:.o=.d)
 
 .PHONY: all install uninstall clean

@@ -1,6 +1,6 @@
 # Maintainer: a-adz-1
 pkgname=navidamp
-pkgver=1.6.0
+pkgver=1.7.0
 pkgrel=1
 pkgdesc="Navidrome for Audacious: shuffle your library or playlists, with a Navidrome button and window for the Winamp Classic interface"
 arch=('x86_64')
@@ -22,14 +22,17 @@ sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 prepare() {
   cd audacious-plugins
   # start from a clean copy, so this works when run more than once
-  git checkout -q -- src/skins-qt
-  git clean -qfd src/skins-qt
+  git checkout -q -- src/skins-qt src/ui-common
+  git clean -qfd src/skins-qt src/ui-common
   patch -p1 < "$srcdir/navidrome-interface.patch"
 }
 
 build() {
   cd "$srcdir"
+  make clean
   make
+  # a fresh build each time: makepkg keeps src/ between runs
+  make -f interface.mk clean
   make -f interface.mk AP_SRC="$srcdir/audacious-plugins" CONFIG_H="$srcdir/interface-config.h"
 }
 
