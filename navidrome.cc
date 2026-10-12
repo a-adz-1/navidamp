@@ -41,13 +41,16 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 #ifndef NAVIDROME_TRANSPORT
 // before the libaudcore headers, whose translation macros clash with Qt's
+#include <QDesktopServices>
 #include <QMessageBox>
+#include <QUrl>
 #include <libaudqt/libaudqt.h>
 #endif
 
@@ -511,7 +514,7 @@ private:
 
 struct Song
 {
-    std::string id, title, artist, album, path, suffix;
+    std::string id, title, artist, album, path, suffix, album_id;
     int track = 0, disc = 0, duration = 0;
 };
 
@@ -558,6 +561,7 @@ static void add_songs(const JVal & list, std::vector<Song> & songs)
         song.track = s.num("track");
         song.disc = s.num("discNumber");
         song.duration = s.num("duration");
+        song.album_id = s.str("albumId");
         songs.push_back(std::move(song));
     }
 }
@@ -798,8 +802,13 @@ static std::string uri_id(const char * uri)
     return id;
 }
 
+// song id -> Navidrome album id, for "open in Navidrome" (main thread only)
+static std::unordered_map<std::string, std::string> s_album_of;
+
 static PlaylistAddItem make_item(const Song & s)
 {
+    if (!s.album_id.empty())
+        s_album_of[s.id] = s.album_id;
     std::string uri = track_uri(s);
     Tuple t;
     t.set_filename(uri.c_str());
@@ -1185,6 +1194,68 @@ static void fetch_playlists_async(bool force = true)
 }
 
 /* ------------------------------------------------------------------ */
+/* Open a track's album in Navidrome's web interface                     */
+/* ------------------------------------------------------------------ */
+
+static void open_web(const std::string & album_id)
+{
+    // Navidrome's web interface: <server>/app/#/album/<id>/show
+    std::string url = base_url() + "/app/" + (album_id.empty() ? "" : "#/album/" + album_id + "/show");
+    if (aud_get_mainloop_type() != MainloopType::Qt ||
+        !QDesktopServices::openUrl(QUrl(QString::fromStdString(url))))
+        aud_ui_show_error(("Navidrome: couldn't open a web browser for " + url).c_str());
+}
+
+/* Main thread. Returns false if this isn't a Navidrome track. */
+static bool open_in_navidrome(const char * uri)
+{
+    std::string id = uri_id(uri);
+    if (id.empty())
+        return false;
+    if (base_url().empty())
+    {
+        aud_ui_show_error(_("Navidrome: set up your server first."));
+        return true;
+    }
+
+    auto known = s_album_of.find(id);
+    if (known != s_album_of.end())
+    {
+        open_web(known->second);
+        return true;
+    }
+
+    // Not loaded this session (e.g. the playlist was restored at startup): ask Navidrome.
+    std::thread([id]() {
+        JVal doc;
+        const JVal * resp = nullptr;
+        std::string err, album_id;
+        if (api_call("getSong", "id=" + url_encode(id), doc, resp, err))
+        {
+            const JVal * song = resp->get("song");
+            album_id = song ? song->str("albumId") : std::string();
+        }
+        else
+            AUDWARN("navidrome: couldn't look up song %s: %s\n", id.c_str(), err.c_str());
+        post_main([id, album_id]() {
+            if (!album_id.empty())
+                s_album_of[id] = album_id;
+            open_web(album_id); // the album, or Navidrome's home page if it couldn't be found
+        });
+    }).detach();
+    return true;
+}
+
+static void open_focused_in_navidrome()
+{
+    Playlist list = Playlist::active_playlist();
+    int focus = list.get_focus();
+    String uri = focus >= 0 ? list.entry_filename(focus) : String();
+    if (!uri || !open_in_navidrome(uri))
+        aud_ui_show_error(_("Navidrome: pick a Navidrome track in the playlist first."));
+}
+
+/* ------------------------------------------------------------------ */
 /* Plugin, menus and settings page                                      */
 /* ------------------------------------------------------------------ */
 
@@ -1249,6 +1320,7 @@ static const MenuItem menu_items[] = {
 };
 
 static const AudMenuID menus[] = {AudMenuID::Main, AudMenuID::Playlist};
+static const char * const OPEN_ITEM = N_("Navidrome: Open Track's Album in Navidrome");
 
 class NavidromePlugin : public GeneralPlugin
 {
@@ -1270,6 +1342,7 @@ public:
         for (AudMenuID m : menus)
             for (auto & item : menu_items)
                 aud_plugin_menu_add(m, item.func, _(item.name), "folder-music");
+        aud_plugin_menu_add(AudMenuID::Playlist, open_focused_in_navidrome, _(OPEN_ITEM), "internet-web-browser");
         // Silently skipped if no server is set; loads the library if there's no playlist yet.
         if (aud_get_bool(CFG, "refresh_on_start") && !base_url().empty())
             s_startup.queue(1500, refresh);
@@ -1284,6 +1357,8 @@ public:
         for (AudMenuID m : menus)
             for (auto & item : menu_items)
                 aud_plugin_menu_remove(m, item.func);
+        aud_plugin_menu_remove(AudMenuID::Playlist, open_focused_in_navidrome);
+        s_album_of.clear();
         s_startup.stop();
         s_pl_startup.stop();
         if (s_worker.joinable())
@@ -1316,6 +1391,8 @@ public:
      *                   returns 0 when loaded, 1 while still loading, 2 if loading failed
      *   get-status      data: String * (library status: progress, or the last result and when)
      *   get-playlist-status  data: String * (playlists status)
+     *   open-in-navidrome    data: track address; opens its album in Navidrome's web
+     *                   interface. Returns -1 if it isn't a Navidrome track.
      *   get-info        data: Index<String> * to fill with: order, source, source name, busy, loaded
      *   set-order       data: order name (used by the next "play" with null data) */
     int take_message(const char * code, const void * data, int) override
@@ -1347,6 +1424,8 @@ public:
             fetch_playlists_async(true);
             return 0;
         }
+        if (!strcmp(code, "open-in-navidrome") && text)
+            return open_in_navidrome(text) ? 0 : -1;
         if (!strcmp(code, "get-playlist-status") && data)
         {
             *(String *)data = s_pl_status;
