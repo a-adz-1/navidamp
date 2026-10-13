@@ -1,6 +1,6 @@
 diff -ruN a/src/skins-qt/button.h b/src/skins-qt/button.h
 --- a/src/skins-qt/button.h	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/button.h	2026-10-12 23:17:10.195954089 +0100
++++ b/src/skins-qt/button.h	2026-10-13 08:58:42.252880706 +0100
 @@ -52,6 +52,7 @@
  
      bool get_active () { return m_active; }
@@ -11,7 +11,7 @@ diff -ruN a/src/skins-qt/button.h b/src/skins-qt/button.h
      enum Type {Normal, Toggle, Small};
 diff -ruN a/src/skins-qt/main.cc b/src/skins-qt/main.cc
 --- a/src/skins-qt/main.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/main.cc	2026-10-12 23:17:10.196454446 +0100
++++ b/src/skins-qt/main.cc	2026-10-13 08:58:42.253219073 +0100
 @@ -46,6 +46,7 @@
  #include "skins_cfg.h"
  #include "equalizer.h"
@@ -75,7 +75,7 @@ diff -ruN a/src/skins-qt/main.cc b/src/skins-qt/main.cc
      mainwin_vis = new SkinnedVis;
 diff -ruN a/src/skins-qt/menus.cc b/src/skins-qt/menus.cc
 --- a/src/skins-qt/menus.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/menus.cc	2026-10-12 23:17:10.196642256 +0100
++++ b/src/skins-qt/menus.cc	2026-10-13 08:58:42.253359194 +0100
 @@ -35,6 +35,7 @@
  #include "actions-playlist.h"
  #include "main.h"
@@ -113,8 +113,8 @@ diff -ruN a/src/skins-qt/menus.cc b/src/skins-qt/menus.cc
          QSize size = menus[id]->sizeHint ();
 diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 --- a/src/skins-qt/navidrome-win.cc	1970-01-01 01:00:00.000000000 +0100
-+++ b/src/skins-qt/navidrome-win.cc	2026-10-12 23:17:10.197600241 +0100
-@@ -0,0 +1,1250 @@
++++ b/src/skins-qt/navidrome-win.cc	2026-10-13 08:58:42.254580013 +0100
+@@ -0,0 +1,1259 @@
 +/*
 + * navidrome-win.cc
 + * Navidrome button and window for the Winamp Classic Interface.
@@ -1295,9 +1295,18 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +
 +    String track_uri = String (str_copy (uri, end - uri));
 +    QString reason = end + 2;
-+    if (reason.contains ("could not be decoded"))
-+        reason = _("Audacious couldn't decode it. The file on your Navidrome server may be "
-+                   "damaged, or in a format Audacious can't play.");
++    // Damaged files get their own explanation from the streaming plugin;
++    // anything else gets the same advice, plus the reason when it says more
++    // than Audacious's generic "could not be decoded".
++    if (! reason.startsWith ("The file on your Navidrome server is damaged"))
++    {
++        QString detail = reason.contains ("could not be decoded") ? QString () : reason;
++        reason = _("Please check it plays in Navidrome, to make sure the file isn't corrupt: "
++                   "click Open in Navidrome and play it there. If it won't play there "
++                   "either, getting the file again should fix it.");
++        if (! detail.isEmpty ())
++            reason += QString ("\n\n") + _("Reason: ") + detail;
++    }
 +
 +    static QPointer<QMessageBox> box;
 +    static QStringList earlier;
@@ -1323,7 +1332,7 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +
 +    last_uri = track_uri;
 +    box->setProperty ("track", name);
-+    box->setText (QString (_("Couldn't play %1")).arg (name));
++    box->setText (QString (_("Failed to play %1")).arg (name));
 +    box->setInformativeText (reason);
 +    box->show ();
 +    return true;
@@ -1367,7 +1376,7 @@ diff -ruN a/src/skins-qt/navidrome-win.cc b/src/skins-qt/navidrome-win.cc
 +}
 diff -ruN a/src/skins-qt/navidrome-win.h b/src/skins-qt/navidrome-win.h
 --- a/src/skins-qt/navidrome-win.h	1970-01-01 01:00:00.000000000 +0100
-+++ b/src/skins-qt/navidrome-win.h	2026-10-12 23:17:10.195775149 +0100
++++ b/src/skins-qt/navidrome-win.h	2026-10-13 08:58:42.252750360 +0100
 @@ -0,0 +1,44 @@
 +/*
 + * navidrome-win.h
@@ -1415,7 +1424,7 @@ diff -ruN a/src/skins-qt/navidrome-win.h b/src/skins-qt/navidrome-win.h
 +#endif
 diff -ruN a/src/skins-qt/plugin.cc b/src/skins-qt/plugin.cc
 --- a/src/skins-qt/plugin.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/plugin.cc	2026-10-12 23:17:10.197020788 +0100
++++ b/src/skins-qt/plugin.cc	2026-10-13 08:58:42.253973101 +0100
 @@ -45,6 +45,7 @@
  #include "skin.h"
  #include "window.h"
@@ -1466,7 +1475,7 @@ diff -ruN a/src/skins-qt/plugin.cc b/src/skins-qt/plugin.cc
  QtSkinsProxy::~QtSkinsProxy ()
 diff -ruN a/src/skins-qt/skin.cc b/src/skins-qt/skin.cc
 --- a/src/skins-qt/skin.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/skin.cc	2026-10-12 23:17:10.197107734 +0100
++++ b/src/skins-qt/skin.cc	2026-10-13 08:58:42.254074616 +0100
 @@ -217,6 +217,15 @@
      return true;
  }
@@ -1494,7 +1503,7 @@ diff -ruN a/src/skins-qt/skin.cc b/src/skins-qt/skin.cc
          AUDDBG ("Skin loading failed\n");
 diff -ruN a/src/skins-qt/skin.h b/src/skins-qt/skin.h
 --- a/src/skins-qt/skin.h	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/skin.h	2026-10-12 23:17:10.197133052 +0100
++++ b/src/skins-qt/skin.h	2026-10-13 08:58:42.254100984 +0100
 @@ -172,6 +172,9 @@
      uint32_t vis_colors[24] {};
  
@@ -1507,7 +1516,7 @@ diff -ruN a/src/skins-qt/skin.h b/src/skins-qt/skin.h
  
 diff -ruN a/src/skins-qt/skins_cfg.cc b/src/skins-qt/skins_cfg.cc
 --- a/src/skins-qt/skins_cfg.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/skins_cfg.cc	2026-10-12 23:17:10.197189113 +0100
++++ b/src/skins-qt/skins_cfg.cc	2026-10-13 08:58:42.254125316 +0100
 @@ -59,6 +59,10 @@
      "active_titlebar_any", "TRUE",
      "always_on_top", "FALSE",
@@ -1530,7 +1539,7 @@ diff -ruN a/src/skins-qt/skins_cfg.cc b/src/skins-qt/skins_cfg.cc
      {"playlist_x", & config.playlist_x},
 diff -ruN a/src/skins-qt/skins_cfg.h b/src/skins-qt/skins_cfg.h
 --- a/src/skins-qt/skins_cfg.h	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/skins_cfg.h	2026-10-12 23:17:10.197215234 +0100
++++ b/src/skins-qt/skins_cfg.h	2026-10-13 08:58:42.254150305 +0100
 @@ -27,6 +27,7 @@
      int player_x, player_y;
      int equalizer_x, equalizer_y;
@@ -1541,7 +1550,7 @@ diff -ruN a/src/skins-qt/skins_cfg.h b/src/skins-qt/skins_cfg.h
      bool autoscroll;
 diff -ruN a/src/skins-qt/view.cc b/src/skins-qt/view.cc
 --- a/src/skins-qt/view.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/view.cc	2026-10-12 23:17:10.197387541 +0100
++++ b/src/skins-qt/view.cc	2026-10-13 08:58:42.254341141 +0100
 @@ -35,6 +35,7 @@
  #include "plugin-window.h"
  #include "skins_cfg.h"
@@ -1597,7 +1606,7 @@ diff -ruN a/src/skins-qt/view.cc b/src/skins-qt/view.cc
  }
 diff -ruN a/src/skins-qt/window.h b/src/skins-qt/window.h
 --- a/src/skins-qt/window.h	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/skins-qt/window.h	2026-10-12 23:17:10.197573654 +0100
++++ b/src/skins-qt/window.h	2026-10-13 08:58:42.254555278 +0100
 @@ -30,6 +30,7 @@
      WINDOW_MAIN,
      WINDOW_EQ,
@@ -1608,7 +1617,7 @@ diff -ruN a/src/skins-qt/window.h b/src/skins-qt/window.h
  
 diff -ruN a/src/ui-common/dialogs-qt.cc b/src/ui-common/dialogs-qt.cc
 --- a/src/ui-common/dialogs-qt.cc	2026-06-07 18:02:36.000000000 +0100
-+++ b/src/ui-common/dialogs-qt.cc	2026-10-12 23:17:10.197686820 +0100
++++ b/src/ui-common/dialogs-qt.cc	2026-10-13 08:58:42.254656869 +0100
 @@ -55,8 +55,13 @@
      }
  }
